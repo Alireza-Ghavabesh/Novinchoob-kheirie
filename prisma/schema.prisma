@@ -1,0 +1,147 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./charity.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model AppConfig {
+  id              Int      @id @default(1)
+  instName        String   @default("مؤسسه خیریه حضرت ام‌البنین (س)")
+  automationTitle String   @default("سامانه اتوماسیون کادر خیریه حضرت ام‌البنین (س)")
+  logoDataUrl     String?
+  phone           String   @default("021-55667788")
+  address         String   @default("تهران، میدان ابوذر، خیابان شهید فتحی، پلاک ۲۴")
+  notice          String   @default("تمامی اطلاعات ثبت‌شده توسط مددکاران معتمد خیریه بازبینی و راستی‌آزمایی می‌گردد.")
+  updatedAt       DateTime @updatedAt
+}
+
+model NeedCategory {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+}
+
+model ProgramCategory {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+}
+
+model BeneficiaryRequest {
+  id              Int      @id @default(autoincrement())
+  trackingCode    String   @unique
+  name            String
+  nid             String
+  phone           String
+  birthDate       String
+  guardian        String
+  dependents      Int      @default(0)
+  housing         String
+  cat             String
+  requestedAmount Float    @default(0)
+  approvedAmount  Float    @default(0)
+  desc            String
+  address         String
+  status          String   @default("PENDING") // PENDING, APPROVED, NEEDS_INFO, REJECTED
+  note            String?
+  approvedDate    String?
+  approvedBy      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Program {
+  id              Int          @id @default(autoincrement())
+  title           String
+  cat             String
+  requestedBudget Float        @default(0)
+  approvedBudget  Float        @default(0)
+  volunteers      Int          @default(0)
+  roles           String?
+  desc            String
+  startDate       String
+  endDate         String
+  status          String       @default("PENDING") // PENDING, APPROVED, NEEDS_REVISION, REJECTED
+  pipelineStage   Int          @default(1) // 1 to 4
+  progressPercent Int          @default(0)
+  approvedDate    String?
+  approvedBy      String?
+  logs            ProgramLog[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+model ProgramLog {
+  id        Int      @id @default(autoincrement())
+  programId Int
+  program   Program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  date      String
+  note      String
+  createdAt DateTime @default(now())
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  name      String
+  role      String   @default("کارشناس")
+  perms     String   // JSON string of permissions
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model PasswordReset {
+  id          Int      @id @default(autoincrement())
+  username    String
+  name        String?
+  status      String   @default("PENDING") // PENDING, RESOLVED
+  requestDate String
+  note        String?
+  createdAt   DateTime @default(now())
+}
+
+model SmsConfig {
+  id          Int      @id @default(1)
+  apiKey      String   @default("")
+  senderLine  String   @default("")
+  provider    String   @default("GHASEDAK") // GHASEDAK, CUSTOM
+  isEnabled   Boolean  @default(true)
+  updatedAt   DateTime @updatedAt
+}
+
+model SmsRule {
+  id              Int      @id @default(autoincrement())
+  title           String
+  eventType       String   // REQUEST_CREATED, REQUEST_STATUS_CHANGED, PROGRAM_CREATED, PROGRAM_STATUS_CHANGED, USER_LOGIN, PASSWORD_RESET
+  triggerStatus   String?  // PENDING, APPROVED, NEEDS_INFO, REJECTED, ALL
+  userFilter      String?  // specific user id or 'ALL'
+  targetType      String   // BENEFICIARY, ADMINS, SPECIFIC_NUMBERS, PROGRAM_OWNER
+  customNumbers   String?  // comma separated numbers
+  templateType    String   @default("SIMPLE") // SIMPLE or OTP (Ghasedak OTP / Pattern)
+  templateName    String?  // Template name or pattern id for ghasedak
+  templateParam1  String?  // placeholder mapping
+  templateParam2  String?
+  templateParam3  String?
+  messageBody     String   // text template with placeholders like {name}, {trackingCode}, {status}, {amount}, {instName}
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model SmsLog {
+  id            Int      @id @default(autoincrement())
+  ruleTitle     String?
+  eventType     String
+  receptor      String
+  message       String
+  status        String   // SUCCESS, FAILED, SIMULATED
+  providerMsgId String?
+  cost          Int?
+  errorDetails  String?
+  createdAt     DateTime @default(now())
+}
+

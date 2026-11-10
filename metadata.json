@@ -1,0 +1,6 @@
+{
+  "name": "سامانه جامع مؤسسه خیریه حضرت ام‌البنین (س)",
+  "description": "سامانه یکپارچه مدیریت امور خیریه، فرم عمومی نیازسنجی مراجعین، پایش طرح‌ها و پروژه‌ها، تقویم اجرایی و اتوماسیون مالی",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
