@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { PushNotificationService } from './pushService.ts';
 
 export interface TriggerContext {
   eventType: 'REQUEST_CREATED' | 'REQUEST_STATUS_CHANGED' | 'PROGRAM_CREATED' | 'PROGRAM_STATUS_CHANGED' | 'USER_LOGIN' | 'PASSWORD_RESET';
@@ -9,9 +10,11 @@ export interface TriggerContext {
 
 export class GhasedakSmsService {
   private prisma: PrismaClient;
+  private pushService: PushNotificationService;
 
   constructor(prisma: PrismaClient) {
     this.prisma = prisma;
+    this.pushService = new PushNotificationService(prisma);
   }
 
   // Helper to format Persian and international numbers to standard 11-digit or E.164
@@ -277,6 +280,16 @@ export class GhasedakSmsService {
               errorDetails: result.error || null,
             },
           });
+        }
+
+        // If rule has sendPush enabled, also send Web Push Notification to registered devices
+        if (rule.sendPush) {
+          this.pushService.sendNotification({
+            title: rule.title || `${instName} - پیام جدید`,
+            body: renderedMessage,
+            url: ctx.data?.trackingCode ? `/` : '/',
+            username: rule.userFilter !== 'ALL' ? (rule.userFilter || undefined) : undefined,
+          }).catch(e => console.error('Push Notification dispatch error:', e));
         }
       }
     } catch (error) {

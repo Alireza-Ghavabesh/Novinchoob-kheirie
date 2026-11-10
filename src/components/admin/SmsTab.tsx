@@ -16,6 +16,9 @@ import {
   Power,
   Check,
   UserCheck,
+  Bell,
+  BellRing,
+  Smartphone,
 } from 'lucide-react';
 import { SmsConfig, SmsRule, SmsLog, SmsEventType, SmsTargetType, StaffUser } from '../../types';
 import { api } from '../../services/api';
@@ -25,7 +28,7 @@ interface SmsTabProps {
 }
 
 export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
-  const [subTab, setSubTab] = useState<'rules' | 'config' | 'logs' | 'test'>('rules');
+  const [subTab, setSubTab] = useState<'rules' | 'config' | 'push' | 'logs' | 'test'>('rules');
   const [config, setConfig] = useState<SmsConfig>({
     id: 1,
     apiKey: '',
@@ -55,6 +58,7 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
     templateParam2: string;
     templateParam3: string;
     messageBody: string;
+    sendPush: boolean;
     isActive: boolean;
   }>({
     title: '',
@@ -69,6 +73,7 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
     templateParam2: '',
     templateParam3: '',
     messageBody: '',
+    sendPush: false,
     isActive: true,
   });
 
@@ -77,6 +82,15 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
   const [testMessage, setTestMessage] = useState('سلام، این یک پیامک آزمایشی از سامانه مؤسسه خیریه است.');
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
+
+  // Web Push Subscription state
+  const [pushSupported, setPushSupported] = useState(false);
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [pushLoading, setPushLoading] = useState(false);
+  const [pushDevices, setPushDevices] = useState<any[]>([]);
+  const [testPushTitle, setTestPushTitle] = useState('اعلان جدید مؤسسه خیریه');
+  const [testPushBody, setTestPushBody] = useState('یک درخواست مددجویی جدید نیازمند بررسی شماست.');
+  const [testPushSending, setTestPushSending] = useState(false);
 
   useEffect(() => {
     fetchInitialData();
@@ -194,6 +208,7 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
       templateParam2: rule.templateParam2 || '',
       templateParam3: rule.templateParam3 || '',
       messageBody: rule.messageBody,
+      sendPush: Boolean(rule.sendPush),
       isActive: rule.isActive,
     });
     setIsEditingRule(true);
@@ -214,6 +229,7 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
       templateParam2: '',
       templateParam3: '',
       messageBody: 'سلام {name} عزیز، درخواست شما در {instName} با کد {trackingCode} دریافت شد.',
+      sendPush: false,
       isActive: true,
     });
     setIsEditingRule(true);
@@ -249,6 +265,111 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
       notify('تاریخچه ارسال پیامک پاک شد.');
     } catch (err: any) {
       notify(err.message || 'خطا در پاکسازی', 'error');
+    }
+  };
+
+  // Convert base64 VAPID public key to Uint8Array for browser PushManager
+  const urlBase64ToUint8Array = (base64String: string) => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  // Check if browser supports push and if current device is registered
+  useEffect(() => {
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      setPushSupported(true);
+      navigator.serviceWorker.register('/sw.js').then(async (reg) => {
+        const sub = await reg.pushManager.getSubscription();
+        setIsSubscribed(!!sub);
+      }).catch(err => console.error('Service worker register error:', err));
+    }
+    loadPushDevices();
+  }, []);
+
+  const loadPushDevices = async () => {
+    try {
+      const devs = await api.getPushDevices();
+      setPushDevices(devs);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleTogglePushSubscription = async () => {
+    if (!pushSupported) {
+      notify('مرورگر شما از پوش نوتیفیکیشن پشتیبانی نمی‌کند یا صفحه در حالت ناامن باز شده است.', 'error');
+      return;
+    }
+
+    try {
+      setPushLoading(true);
+      const reg = await navigator.serviceWorker.ready;
+
+      if (isSubscribed) {
+        // Unsubscribe
+        const currentSub = await reg.pushManager.getSubscription();
+        if (currentSub) {
+          await currentSub.unsubscribe();
+          await api.unsubscribePush(currentSub.endpoint);
+        }
+        setIsSubscribed(false);
+        notify('دریافت نوتیفیکیشن روی این دستگاه غیرفعال شد.');
+      } else {
+        // Request Permission
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          notify('دسترسی نوتیفیکیشن توسط کاربر رد شد یا مسدود است.', 'error');
+          return;
+        }
+
+        // Get VAPID public key from server
+        const vapidPublicKey = await api.getPushPublicKey();
+        if (!vapidPublicKey) {
+          throw new Error('کلید عمومی VAPID دریافت نشد.');
+        }
+
+        const convertedVapidKey = urlBase64ToUint8Array(vapidPublicKey);
+        const newSub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: convertedVapidKey,
+        });
+
+        const subJson = newSub.toJSON();
+        await api.savePushSubscription(
+          {
+            endpoint: subJson.endpoint,
+            keys: subJson.keys,
+          },
+          currentUser.username
+        );
+
+        setIsSubscribed(true);
+        notify('این دستگاه با موفقیت برای دریافت نوتیفیکیشن ثبت شد! زنگ و لرزش فعال است.');
+      }
+      await loadPushDevices();
+    } catch (err: any) {
+      notify(err.message || 'خطا در فعال‌سازی نوتیفیکیشن', 'error');
+    } finally {
+      setPushLoading(false);
+    }
+  };
+
+  const handleSendTestPush = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setTestPushSending(true);
+      const res = await api.testPush(testPushTitle, testPushBody);
+      notify(`اعلان تست برای ${res.sentCount} دستگاه ثبت‌شده ارسال شد.`);
+    } catch (err: any) {
+      notify(err.message || 'خطا در ارسال تست نوتیفیکیشن', 'error');
+    } finally {
+      setTestPushSending(false);
     }
   };
 
@@ -336,6 +457,18 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
         >
           <Key className="w-4 h-4" />
           تنظیمات اتصال قاصدک (API Key)
+        </button>
+
+        <button
+          onClick={() => setSubTab('push')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
+            subTab === 'push'
+              ? 'bg-slate-900 text-white shadow'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Bell className="w-4 h-4 text-emerald-400" />
+          پوش نوتیفیکیشن گوشی ({pushDevices.length} دستگاه)
         </button>
 
         <button
@@ -659,6 +792,28 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
                   </div>
                 </div>
 
+                {/* Push Notification Toggle for Rule */}
+                <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <BellRing className="w-4 h-4 text-amber-600" />
+                    <div>
+                      <span className="font-bold text-slate-800 text-xs">ارسال همزمان پوش نوتیفیکیشن به گوشی مدیران / کارشناسان</span>
+                      <p className="text-[10px] text-slate-500">
+                        در صورت فعال بودن، علاوه بر پیامک، اعلان فوری همراه با لرزش و صدا روی گوشی‌های ثبت‌شده ارسال می‌شود.
+                      </p>
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ruleFormData.sendPush}
+                      onChange={e => setRuleFormData({ ...ruleFormData, sendPush: e.target.checked })}
+                      className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
+                    />
+                    <span className="text-xs font-semibold text-slate-700">فعال‌سازی پوش</span>
+                  </label>
+                </div>
+
                 {/* Submit Buttons */}
                 <div className="flex items-center justify-end gap-2 pt-2">
                   <button
@@ -725,6 +880,11 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
                       {rule.templateType === 'OTP' && (
                         <span className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-md text-[10px] font-semibold">
                           قالب OTP: {rule.templateName}
+                        </span>
+                      )}
+                      {rule.sendPush && (
+                        <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1">
+                          <BellRing className="w-3 h-3 text-amber-600" /> پوش گوشی
                         </span>
                       )}
                     </div>
@@ -862,6 +1022,141 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
               <li>در صورت استفاده از خطوط اختصاصی معمولی، گیرندگانی که پیامک تبلیغاتی را مسدود کرده باشند پیام را دریافت نخواهند کرد.</li>
               <li>برای اجرای محلی بدون اینترنت، نیازی به وارد کردن کلید نیست؛ سیستم تمام رویدادها را ثبت کرده و وضعیت را شبیه‌سازی می‌کند.</li>
             </ul>
+          </div>
+        </div>
+      )}
+
+      {/* 2.5 WEB PUSH NOTIFICATION TAB */}
+      {subTab === 'push' && (
+        <div className="space-y-6 max-w-3xl mx-auto">
+          {/* Device Activation Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+            <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center border border-emerald-500/20">
+                <BellRing className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">فعال‌سازی پوش نوتیفیکیشن روی این دستگاه</h3>
+                <p className="text-xs text-slate-500">
+                  بدون نیاز به نصب اپلیکیشن؛ با فعال‌سازی این گزینه، پیام‌ها بلافاصله روی صفحه گوشی/کامپیوتر شما ظاهر می‌شوند.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="space-y-1 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-slate-800">وضعیت این دستگاه:</span>
+                  {isSubscribed ? (
+                    <span className="bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1 text-[11px]">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                      متصل و آماده دریافت اعلان
+                    </span>
+                  ) : (
+                    <span className="bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-full font-medium text-[11px]">
+                      غیرفعال روی این مرورگر
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  {isSubscribed
+                    ? 'به محض رخ دادن رویدادهای انتخاب‌شده در شروط سیستم، گوشی شما زنگ خورده و اعلان نمایش داده می‌شود.'
+                    : 'با فشردن دکمه زیر، درخواست دسترسی مرورگر را تأیید کنید.'}
+                </p>
+              </div>
+
+              <button
+                onClick={handleTogglePushSubscription}
+                disabled={pushLoading}
+                className={`px-5 py-2.5 rounded-xl font-bold text-xs shadow transition flex items-center gap-2 shrink-0 ${
+                  isSubscribed
+                    ? 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+                    : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md'
+                }`}
+              >
+                {pushLoading ? (
+                  <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : isSubscribed ? (
+                  <>
+                    <XCircle className="w-4 h-4" />
+                    غیرفعال‌سازی این دستگاه
+                  </>
+                ) : (
+                  <>
+                    <Bell className="w-4 h-4" />
+                    فعال‌سازی دریافت اعلان روی این گوشی
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Test Push Card */}
+            <form onSubmit={handleSendTestPush} className="pt-2 space-y-3">
+              <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Send className="w-4 h-4 text-emerald-600" />
+                ارسال اعلان تستی به تمام دستگاه‌های فعال
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block text-slate-600 mb-1">عنوان اعلان:</label>
+                  <input
+                    type="text"
+                    value={testPushTitle}
+                    onChange={e => setTestPushTitle(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-emerald-500 bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 mb-1">متن اعلان:</label>
+                  <input
+                    type="text"
+                    value={testPushBody}
+                    onChange={e => setTestPushBody(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-emerald-500 bg-white"
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={testPushSending || pushDevices.length === 0}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs shadow transition flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {testPushSending ? 'در حال ارسال...' : 'ارسال اعلان فوری به گوشی‌ها'}
+              </button>
+            </form>
+          </div>
+
+          {/* Connected Devices List */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+            <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Smartphone className="w-4 h-4 text-emerald-600" />
+              لیست گوشی‌ها و دستگاه‌های متصل ({pushDevices.length})
+            </h4>
+            <div className="divide-y divide-slate-100 text-xs">
+              {pushDevices.map((dev) => (
+                <div key={dev.id} className="py-2.5 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                      <Smartphone className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-800">کاربر: {dev.username || 'ناشناس'}</span>
+                      <p className="text-[10px] text-slate-400 truncate max-w-xs md:max-w-md">
+                        {dev.userAgent || 'مرورگر وب'}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    {new Date(dev.createdAt).toLocaleDateString('fa-IR')}
+                  </span>
+                </div>
+              ))}
+              {pushDevices.length === 0 && (
+                <p className="py-6 text-center text-xs text-slate-400">
+                  هنوز هیچ دستگاهی ثبت نشده است. با گوشی خود وارد شده و دکمه فعال‌سازی را بزنید.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}

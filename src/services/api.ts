@@ -287,5 +287,39 @@ export const api = {
     }
     return data;
   },
+
+  // Web Push
+  getPushPublicKey: async (): Promise<string> => {
+    const res = await fetch('/api/push/key');
+    const data = await res.json();
+    return data.publicKey || '';
+  },
+  savePushSubscription: async (subscription: any, username: string): Promise<any> => {
+    const res = await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription, username }),
+    });
+    return res.json();
+  },
+  unsubscribePush: async (endpoint: string): Promise<void> => {
+    await fetch('/api/push/unsubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint }),
+    });
+  },
+  testPush: async (title: string, body: string, username?: string): Promise<any> => {
+    const res = await fetch('/api/push/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, body, username }),
+    });
+    return res.json();
+  },
+  getPushDevices: async (): Promise<any[]> => {
+    const res = await fetch('/api/push/devices');
+    return res.json();
+  },
 };
 

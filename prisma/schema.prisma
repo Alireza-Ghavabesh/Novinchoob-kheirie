@@ -127,6 +127,7 @@ model SmsRule {
   templateParam2  String?
   templateParam3  String?
   messageBody     String   // text template with placeholders like {name}, {trackingCode}, {status}, {amount}, {instName}
+  sendPush        Boolean  @default(false)
   isActive        Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -144,4 +145,24 @@ model SmsLog {
   errorDetails  String?
   createdAt     DateTime @default(now())
 }
+
+model PushConfig {
+  id             Int      @id @default(1)
+  publicKey      String   @default("")
+  privateKey     String   @default("")
+  contactEmail   String   @default("mailto:admin@charity.local")
+  isEnabled      Boolean  @default(true)
+  updatedAt      DateTime @updatedAt
+}
+
+model PushSubscription {
+  id        Int      @id @default(autoincrement())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  username  String?  // username who subscribed (e.g. admin or staff)
+  userAgent String?
+  createdAt DateTime @default(now())
+}
+
 

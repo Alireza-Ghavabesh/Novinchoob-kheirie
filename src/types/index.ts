@@ -113,9 +113,17 @@ export interface SmsRule {
   templateParam2?: string | null;
   templateParam3?: string | null;
   messageBody: string;
+  sendPush?: boolean;
   isActive: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface PushDevice {
+  id: number;
+  username: string;
+  userAgent?: string;
+  createdAt: string;
 }
 
 export interface SmsLog {

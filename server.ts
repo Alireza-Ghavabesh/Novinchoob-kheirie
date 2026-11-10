@@ -5,12 +5,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { GhasedakSmsService } from './src/services/smsService.ts';
+import { PushNotificationService } from './src/services/pushService.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const prisma = new PrismaClient();
 const smsService = new GhasedakSmsService(prisma);
+const pushService = new PushNotificationService(prisma);
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
@@ -887,6 +889,7 @@ app.post('/api/sms/rules', async (req, res) => {
       templateParam2,
       templateParam3,
       messageBody,
+      sendPush,
       isActive,
     } = req.body;
 
@@ -908,6 +911,7 @@ app.post('/api/sms/rules', async (req, res) => {
         templateParam2: templateParam2 || '',
         templateParam3: templateParam3 || '',
         messageBody,
+        sendPush: sendPush !== undefined ? Boolean(sendPush) : false,
         isActive: isActive !== undefined ? Boolean(isActive) : true,
       },
     });
@@ -933,6 +937,7 @@ app.put('/api/sms/rules/:id', async (req, res) => {
       templateParam2,
       templateParam3,
       messageBody,
+      sendPush,
       isActive,
     } = req.body;
 
@@ -949,6 +954,7 @@ app.put('/api/sms/rules/:id', async (req, res) => {
     if (templateParam2 !== undefined) data.templateParam2 = templateParam2;
     if (templateParam3 !== undefined) data.templateParam3 = templateParam3;
     if (messageBody !== undefined) data.messageBody = messageBody;
+    if (sendPush !== undefined) data.sendPush = Boolean(sendPush);
     if (isActive !== undefined) data.isActive = Boolean(isActive);
 
     const updated = await prisma.smsRule.update({
@@ -1027,6 +1033,98 @@ app.post('/api/sms/test', async (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: 'Failed to test SMS', details: String(error) });
+  }
+});
+
+// --- Web Push Notification Endpoints ---
+
+// 1. Get VAPID Public Key for client subscription
+app.get('/api/push/key', async (_req, res) => {
+  try {
+    const key = await pushService.getPublicKey();
+    res.json({ publicKey: key });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get VAPID key', details: String(error) });
+  }
+});
+
+// 2. Subscribe device
+app.post('/api/push/subscribe', async (req, res) => {
+  try {
+    const { subscription, username } = req.body;
+    if (!subscription || !subscription.endpoint || !subscription.keys) {
+      return res.status(400).json({ error: 'اطلاعات اشتراک ناقص است.' });
+    }
+
+    const { endpoint, keys } = subscription;
+    const userAgent = req.headers['user-agent'] || '';
+
+    const saved = await prisma.pushSubscription.upsert({
+      where: { endpoint },
+      update: {
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+        username: username || 'admin',
+        userAgent,
+      },
+      create: {
+        endpoint,
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+        username: username || 'admin',
+        userAgent,
+      },
+    });
+
+    res.json({ success: true, id: saved.id });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save subscription', details: String(error) });
+  }
+});
+
+// 3. Unsubscribe device
+app.post('/api/push/unsubscribe', async (req, res) => {
+  try {
+    const { endpoint } = req.body;
+    if (endpoint) {
+      await prisma.pushSubscription.deleteMany({ where: { endpoint } });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to unsubscribe', details: String(error) });
+  }
+});
+
+// 4. Test Push Notification
+app.post('/api/push/test', async (req, res) => {
+  try {
+    const { title, body, username } = req.body;
+    const result = await pushService.sendNotification({
+      title: title || 'تست اعلان مؤسسه خیریه',
+      body: body || 'این یک اعلان آزمایشی پوش نوتیفیکیشن روی گوشی شماست.',
+      username: username || undefined,
+    });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to test push notification', details: String(error) });
+  }
+});
+
+// 5. Get registered push devices count
+app.get('/api/push/devices', async (_req, res) => {
+  try {
+    const devices = await prisma.pushSubscription.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        username: true,
+        userAgent: true,
+        createdAt: true,
+      },
+    });
+    res.json(devices);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch devices', details: String(error) });
   }
 });
 
