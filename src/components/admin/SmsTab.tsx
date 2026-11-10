@@ -573,32 +573,90 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
                   )}
                 </div>
 
-                {/* Message Body & Placeholders */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="font-semibold text-slate-700">متن پیامک:</label>
-                    <div className="flex flex-wrap items-center gap-1">
-                      <span className="text-[11px] text-slate-500">درج خودکار متغیر:</span>
-                      {['{name}', '{trackingCode}', '{status}', '{amount}', '{cat}', '{note}', '{instName}', '{date}'].map(ph => (
-                        <button
-                          key={ph}
-                          type="button"
-                          onClick={() => insertPlaceholder(ph)}
-                          className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-1.5 py-0.5 rounded text-[10px] font-mono transition"
-                        >
-                          {ph}
-                        </button>
-                      ))}
-                    </div>
+                {/* Message Body & Placeholders with Detailed Guide */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="font-semibold text-slate-800 text-xs">متن پیامک ارسالی:</label>
+                    <span className="text-[11px] text-slate-500">
+                      روی هر متغیر کلیک کنید تا در متن پیام درج شود:
+                    </span>
                   </div>
+
+                  {/* Variables quick-insert chips */}
+                  <div className="flex flex-wrap items-center gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl">
+                    {[
+                      { code: '{name}', label: 'نام متقاضی / طرح', desc: 'نام کامل مددجو (یا عنوان طرح در رویداد طرح‌ها)' },
+                      { code: '{trackingCode}', label: 'کد رهگیری', desc: 'کد پیگیری درخواست (مانند REQ-1405-1234)' },
+                      { code: '{status}', label: 'وضعیت پرونده', desc: 'عنوان وضعیت به فارسی (مانند: تأیید و تصویب شد، نیازمند تکمیل مدارک)' },
+                      { code: '{amount}', label: 'مبلغ ریالی', desc: 'مبلغ مصوب شده یا درخواستی با جداکننده سه رقمی و فونت فارسی' },
+                      { code: '{cat}', label: 'دسته‌بندی نیاز', desc: 'موضوع نیاز (مانند درمانی، جهیزیه، معیشت، مسکن)' },
+                      { code: '{note}', label: 'یادداشت / علت', desc: 'توضیحات تکمیلی یا علت بازگرداندن پرونده به مددجو' },
+                      { code: '{instName}', label: 'نام خیریه', desc: 'نام مؤسسه خیریه ثبت‌شده در تنظیمات سیستم' },
+                      { code: '{date}', label: 'تاریخ شمسی', desc: 'تاریخ ثبت یا تغییر وضعیت به تقویم شمسی' },
+                    ].map(item => (
+                      <button
+                        key={item.code}
+                        type="button"
+                        onClick={() => insertPlaceholder(item.code)}
+                        title={item.desc}
+                        className="group flex items-center gap-1 bg-white hover:bg-emerald-50 hover:border-emerald-300 text-slate-700 hover:text-emerald-800 px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] shadow-2xs transition"
+                      >
+                        <span className="font-mono text-emerald-600 font-bold text-[10px] dir-ltr">{item.code}</span>
+                        <span className="text-slate-500 group-hover:text-emerald-700 text-[10px]">({item.label})</span>
+                      </button>
+                    ))}
+                  </div>
+
                   <textarea
                     rows={3}
                     required
                     value={ruleFormData.messageBody}
                     onChange={e => setRuleFormData({ ...ruleFormData, messageBody: e.target.value })}
-                    className="w-full border border-slate-300 rounded-xl p-3 text-xs focus:ring-2 focus:ring-emerald-500"
-                    placeholder="سلام {name} عزیز، درخواست شما در {instName} با کد رهگیری {trackingCode} ثبت گردید."
+                    className="w-full border border-slate-300 rounded-xl p-3 text-xs focus:ring-2 focus:ring-emerald-500 font-sans"
+                    placeholder="سلام {name} عزیز، درخواست شما در {instName} با کد رهگیری {trackingCode} با موفقیت ثبت شد."
                   />
+
+                  {/* Detailed Variable Guide Box */}
+                  <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-3 text-[11px] text-slate-700 space-y-2">
+                    <div className="font-bold text-emerald-900 flex items-center gap-1.5 text-xs">
+                      <Info className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>راهنمای متغیرهای هوشمند متن پیامک:</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 pt-1">
+                      <div className="bg-white p-2 rounded-lg border border-emerald-100 shadow-2xs">
+                        <span className="font-mono font-bold text-emerald-700 text-[11px] block dir-ltr">&#123;name&#125;</span>
+                        <p className="text-slate-600 text-[10px] mt-0.5">نام متقاضی (مثال: «علی محمدی»)</p>
+                      </div>
+                      <div className="bg-white p-2 rounded-lg border border-emerald-100 shadow-2xs">
+                        <span className="font-mono font-bold text-emerald-700 text-[11px] block dir-ltr">&#123;trackingCode&#125;</span>
+                        <p className="text-slate-600 text-[10px] mt-0.5">کد رهگیری پرونده (مثال: «REQ-1405-3210»)</p>
+                      </div>
+                      <div className="bg-white p-2 rounded-lg border border-emerald-100 shadow-2xs">
+                        <span className="font-mono font-bold text-emerald-700 text-[11px] block dir-ltr">&#123;status&#125;</span>
+                        <p className="text-slate-600 text-[10px] mt-0.5">وضعیت پرونده (مثال: «تأیید و تصویب شد»)</p>
+                      </div>
+                      <div className="bg-white p-2 rounded-lg border border-emerald-100 shadow-2xs">
+                        <span className="font-mono font-bold text-emerald-700 text-[11px] block dir-ltr">&#123;amount&#125;</span>
+                        <p className="text-slate-600 text-[10px] mt-0.5">مبلغ تصویب‌شده یا درخواستی (مثال: «۲۵,۰۰۰,۰۰۰»)</p>
+                      </div>
+                      <div className="bg-white p-2 rounded-lg border border-emerald-100 shadow-2xs">
+                        <span className="font-mono font-bold text-emerald-700 text-[11px] block dir-ltr">&#123;cat&#125;</span>
+                        <p className="text-slate-600 text-[10px] mt-0.5">دسته‌بندی نیاز (مثال: «درمانی و دارویی»)</p>
+                      </div>
+                      <div className="bg-white p-2 rounded-lg border border-emerald-100 shadow-2xs">
+                        <span className="font-mono font-bold text-emerald-700 text-[11px] block dir-ltr">&#123;note&#125;</span>
+                        <p className="text-slate-600 text-[10px] mt-0.5">توضیح کارشناس / نقص پرونده جهت بازبینی</p>
+                      </div>
+                      <div className="bg-white p-2 rounded-lg border border-emerald-100 shadow-2xs">
+                        <span className="font-mono font-bold text-emerald-700 text-[11px] block dir-ltr">&#123;instName&#125;</span>
+                        <p className="text-slate-600 text-[10px] mt-0.5">نام خیریه (تنظیم‌شده در مشخصات مؤسسه)</p>
+                      </div>
+                      <div className="bg-white p-2 rounded-lg border border-emerald-100 shadow-2xs">
+                        <span className="font-mono font-bold text-emerald-700 text-[11px] block dir-ltr">&#123;date&#125;</span>
+                        <p className="text-slate-600 text-[10px] mt-0.5">تاریخ شمسی ثبت یا بررسی (مثال: «۱۴۰۵/۰۱/۱۵»)</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Submit Buttons */}
