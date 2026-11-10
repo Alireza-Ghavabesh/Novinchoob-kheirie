@@ -105,7 +105,7 @@ export class GhasedakSmsService {
         if (rule.param2) params.append('param2', rule.param2);
         if (rule.param3) params.append('param3', rule.param3);
 
-        const response = await fetch('https://api.ghasedak.me/v2/verification/send/simple', {
+        const response = await fetch('https://api.ghasedaksms.com/v2/verification/send/simple', {
           method: 'POST',
           headers: {
             'apikey': apiKey,
@@ -127,7 +127,7 @@ export class GhasedakSmsService {
         }
       } else {
         // Send via Simple SMS API
-        // Endpoint: https://api.ghasedak.me/v2/sms/send/simple
+        // Endpoint: https://api.ghasedaksms.com/v2/sms/send/simple
         const params = new URLSearchParams();
         params.append('message', message);
         params.append('receptor', cleanReceptor);
@@ -135,7 +135,7 @@ export class GhasedakSmsService {
           params.append('linenumber', senderLine.trim());
         }
 
-        const response = await fetch('https://api.ghasedak.me/v2/sms/send/simple', {
+        const response = await fetch('https://api.ghasedaksms.com/v2/sms/send/simple', {
           method: 'POST',
           headers: {
             'apikey': apiKey,

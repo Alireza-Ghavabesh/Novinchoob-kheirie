@@ -735,7 +735,7 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
             <div>
               <h3 className="text-base font-bold text-slate-900">تنظیمات اتصال به سرویس پیامک قاصدک (Ghasedak)</h3>
               <p className="text-xs text-slate-500">
-                بر اساس مستندات وب‌سرویس REST قاصدک (`api.ghasedak.me/v2`)
+                بر اساس مستندات وب‌سرویس REST قاصدک (`api.ghasedaksms.com/v2`)
               </p>
             </div>
           </div>
