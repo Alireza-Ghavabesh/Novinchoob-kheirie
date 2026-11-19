@@ -15,7 +15,22 @@ const prisma = new PrismaClient();
 const smsService = new GhasedakSmsService(prisma);
 const pushService = new PushNotificationService(prisma);
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+function resolveServerPort(): number {
+  const portArgIdx = process.argv.findIndex((arg) => arg === '--port' || arg === '-p');
+  if (portArgIdx !== -1 && process.argv[portArgIdx + 1]) {
+    const cliPort = parseInt(process.argv[portArgIdx + 1], 10);
+    if (!Number.isNaN(cliPort) && cliPort > 0) return cliPort;
+  }
+  const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : NaN;
+  const nginxPort = process.env.NGINX_PORT ? parseInt(process.env.NGINX_PORT, 10) : NaN;
+  if (!Number.isNaN(envPort) && envPort > 0 && envPort !== nginxPort) {
+    return envPort;
+  }
+  const defaultPort = process.env.DEFAULT_APP_PORT ? parseInt(process.env.DEFAULT_APP_PORT, 10) : 3000;
+  return !Number.isNaN(defaultPort) && defaultPort > 0 ? defaultPort : 3000;
+}
+
+const PORT = resolveServerPort();
 const AUTH_SECRET = process.env.AUTH_SECRET || 'kheirie-novinchoob-auth-secret-v1';
 
 // --- Auth & Phone Helpers ---
@@ -2185,8 +2200,72 @@ async function startServer() {
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: process.env.DISABLE_HMR !== 'true' },
+      server: { middlewareMode: true, hmr: false, watch: null },
       appType: 'spa',
+    });
+    // Serve a WebSocket-free /@vite/client stub so HMR-disabled iframe environments never hit WS connection errors
+    app.get('/@vite/client', (_req, res) => {
+      res.type('application/javascript').send(`
+const sheetsMap = new Map();
+const linkSheetsMap = new Map();
+if ("document" in globalThis) {
+  document.querySelectorAll("style[data-vite-dev-id]").forEach((el) => {
+    sheetsMap.set(el.getAttribute("data-vite-dev-id"), el);
+  });
+  document.querySelectorAll('link[rel="stylesheet"][data-vite-dev-id]').forEach((el) => {
+    linkSheetsMap.set(el.getAttribute("data-vite-dev-id"), el);
+  });
+}
+export function updateStyle(id, content) {
+  if (linkSheetsMap.has(id)) return;
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement("style");
+    style.setAttribute("type", "text/css");
+    style.setAttribute("data-vite-dev-id", id);
+    style.textContent = content;
+    document.head.appendChild(style);
+  } else if (style.textContent !== content) {
+    style.textContent = content;
+  }
+  sheetsMap.set(id, style);
+}
+export function removeStyle(id) {
+  if (linkSheetsMap.has(id)) {
+    document.querySelectorAll(\`link[rel="stylesheet"][data-vite-dev-id="\${CSS.escape(id)}"]\`).forEach((el) => el.remove());
+    linkSheetsMap.delete(id);
+  }
+  const style = sheetsMap.get(id);
+  if (style) {
+    document.head.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+export function createHotContext() {
+  return {
+    data: {},
+    accept() {},
+    acceptExports() {},
+    dispose() {},
+    prune() {},
+    decline() {},
+    invalidate() {},
+    on() {},
+    off() {},
+    send() {},
+  };
+}
+export function injectQuery(url, queryToInject) {
+  if (url[0] !== "." && url[0] !== "/") return url;
+  const pathname = url.replace(/[?#].*$/, "");
+  const { search, hash } = new URL(url, "http://vite.dev");
+  return \`\${pathname}?\${queryToInject}\${search ? "&" + search.slice(1) : ""}\${hash || ""}\`;
+}
+export class ErrorOverlay extends HTMLElement {}
+if (globalThis.customElements && !globalThis.customElements.get("vite-error-overlay")) {
+  globalThis.customElements.define("vite-error-overlay", ErrorOverlay);
+}
+`);
     });
     app.use(vite.middlewares);
   } else {
