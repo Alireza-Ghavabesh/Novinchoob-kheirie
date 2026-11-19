@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Heart,
   Send,
@@ -11,10 +11,6 @@ import {
   Info,
   Phone,
   MapPin,
-  Calendar,
-  Users,
-  Home,
-  CreditCard,
   FileText,
   ShieldAlert,
 } from 'lucide-react';
@@ -28,18 +24,34 @@ import {
   SHAMSI_MONTHS,
 } from '../utils/persian';
 import { api } from '../services/api';
+import {
+  EntityDefinition,
+  parsePublicFormSchema,
+} from '../utils/publicFormConfig';
+import {
+  DynamicFieldRenderer,
+  DynamicFormValuesMap,
+  validateAndExtractCustomFields,
+} from './DynamicFieldRenderer';
 
 interface PublicViewProps {
   config: AppConfig | null;
   needCategories: Category[];
+  entities?: EntityDefinition[];
   onRequestSubmitted?: () => void;
 }
 
 export const PublicView: React.FC<PublicViewProps> = ({
   config,
   needCategories,
+  entities = [],
   onRequestSubmitted,
 }) => {
+  const formSchema = useMemo(
+    () => parsePublicFormSchema(config?.publicFormConfig),
+    [config?.publicFormConfig]
+  );
+
   // Form State
   const [name, setName] = useState('');
   const [nid, setNid] = useState('');
@@ -47,13 +59,27 @@ export const PublicView: React.FC<PublicViewProps> = ({
   const [birthYear, setBirthYear] = useState('1365');
   const [birthMonth, setBirthMonth] = useState('01');
   const [birthDay, setBirthDay] = useState('15');
-  const [guardian, setGuardian] = useState('زن سرپرست خانوار');
+  const [guardian, setGuardian] = useState(formSchema.guardianOptions[0] || 'زن سرپرست خانوار');
   const [dependents, setDependents] = useState(2);
-  const [housing, setHousing] = useState('استیجاری');
+  const [housing, setHousing] = useState(formSchema.housingOptions[0] || 'استیجاری');
   const [cat, setCat] = useState('');
   const [requestedAmount, setRequestedAmount] = useState<number | ''>(15000000);
   const [desc, setDesc] = useState('');
   const [address, setAddress] = useState('');
+  const [customValues, setCustomValues] = useState<DynamicFormValuesMap>({});
+
+  // Sync default select values if schema options change in settings
+  useEffect(() => {
+    if (formSchema.guardianOptions.length > 0 && !formSchema.guardianOptions.includes(guardian)) {
+      setGuardian(formSchema.guardianOptions[0]);
+    }
+  }, [formSchema.guardianOptions, guardian]);
+
+  useEffect(() => {
+    if (formSchema.housingOptions.length > 0 && !formSchema.housingOptions.includes(housing)) {
+      setHousing(formSchema.housingOptions[0]);
+    }
+  }, [formSchema.housingOptions, housing]);
 
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -92,8 +118,21 @@ export const PublicView: React.FC<PublicViewProps> = ({
       return;
     }
 
+    const extracted = validateAndExtractCustomFields(
+      formSchema.customFields,
+      customValues,
+      entities
+    );
+    if (extracted.error) {
+      setFormError(extracted.error);
+      return;
+    }
+    const submittedCustomFields = extracted.values;
+
     const selectedCat = cat || (needCategories[0] ? needCategories[0].name : 'درمان و هزینه‌های پزشکی');
-    const birthDate = `${birthYear}/${birthMonth.padStart(2, '0')}/${birthDay.padStart(2, '0')}`;
+    const birthDate = formSchema.builtin.showBirthDate
+      ? `${birthYear}/${birthMonth.padStart(2, '0')}/${birthDay.padStart(2, '0')}`
+      : '';
 
     try {
       setSubmitting(true);
@@ -102,13 +141,14 @@ export const PublicView: React.FC<PublicViewProps> = ({
         nid: cleanNid,
         phone: cleanPhone,
         birthDate,
-        guardian,
-        dependents: Number(dependents),
-        housing,
+        guardian: formSchema.builtin.showGuardian ? guardian : '-',
+        dependents: formSchema.builtin.showDependents ? Number(dependents) : 0,
+        housing: formSchema.builtin.showHousing ? housing : '-',
         cat: selectedCat,
-        requestedAmount: Number(requestedAmount) || 0,
-        desc: desc.trim(),
-        address: address.trim(),
+        requestedAmount: formSchema.builtin.showRequestedAmount ? Number(requestedAmount) || 0 : 0,
+        desc: formSchema.builtin.showDesc ? desc.trim() : '',
+        address: formSchema.builtin.showAddress ? address.trim() : '',
+        customFields: submittedCustomFields,
       });
 
       setSubmittedRequest(newReq);
@@ -121,6 +161,7 @@ export const PublicView: React.FC<PublicViewProps> = ({
       setDesc('');
       setAddress('');
       setRequestedAmount(15000000);
+      setCustomValues({});
     } catch (err: any) {
       setFormError(err.message || 'خطا در ثبت درخواست');
     } finally {
@@ -131,14 +172,15 @@ export const PublicView: React.FC<PublicViewProps> = ({
   // Handle Tracking Search
   const handleTrack = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!trackingInput.trim()) return;
+    const cleaned = toEnglishDigits(trackingInput.trim());
+    if (!cleaned) return;
 
     setTrackingLoading(true);
     setTrackingError('');
     setTrackingResult(null);
 
     try {
-      const res = await api.trackRequest(trackingInput.trim());
+      const res = await api.trackRequest(cleaned);
       setTrackingResult(res);
     } catch (err: any) {
       setTrackingError(err.message || 'پرونده‌ای با این مشخصات یافت نشد.');
@@ -291,8 +333,8 @@ export const PublicView: React.FC<PublicViewProps> = ({
               </div>
             </div>
 
-            {/* Row 2: Phone & Birth Date */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Row 2: Phone & Optional Birth Date */}
+            <div className={`grid grid-cols-1 ${formSchema.builtin.showBirthDate ? 'sm:grid-cols-2' : ''} gap-4`}>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                   شماره تلفن همراه (جهت پیامک وضعیت) <span className="text-rose-500">*</span>
@@ -307,110 +349,121 @@ export const PublicView: React.FC<PublicViewProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  تاریخ تولد (شمسی)
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <select
-                    value={birthYear}
-                    onChange={(e) => setBirthYear(e.target.value)}
-                    className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                  >
-                    {Array.from({ length: 70 }, (_, i) => 1340 + i).map((y) => (
-                      <option key={y} value={y}>
-                        {toPersianDigits(y)}
-                      </option>
-                    ))}
-                  </select>
+              {formSchema.builtin.showBirthDate && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                    تاریخ تولد (شمسی)
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <select
+                      value={birthYear}
+                      onChange={(e) => setBirthYear(e.target.value)}
+                      className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                    >
+                      {Array.from({ length: 70 }, (_, i) => 1340 + i).map((y) => (
+                        <option key={y} value={y}>
+                          {toPersianDigits(y)}
+                        </option>
+                      ))}
+                    </select>
 
-                  <select
-                    value={birthMonth}
-                    onChange={(e) => setBirthMonth(e.target.value)}
-                    className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                  >
-                    {SHAMSI_MONTHS.map((m, idx) => (
-                      <option key={m} value={String(idx + 1).padStart(2, '0')}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
+                    <select
+                      value={birthMonth}
+                      onChange={(e) => setBirthMonth(e.target.value)}
+                      className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                    >
+                      {SHAMSI_MONTHS.map((m, idx) => (
+                        <option key={m} value={String(idx + 1).padStart(2, '0')}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
 
-                  <select
-                    value={birthDay}
-                    onChange={(e) => setBirthDay(e.target.value)}
-                    className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                  >
-                    {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
-                      <option key={d} value={String(d).padStart(2, '0')}>
-                        {toPersianDigits(d)}
-                      </option>
-                    ))}
-                  </select>
+                    <select
+                      value={birthDay}
+                      onChange={(e) => setBirthDay(e.target.value)}
+                      className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                    >
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                        <option key={d} value={String(d).padStart(2, '0')}>
+                          {toPersianDigits(d)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
-            {/* Row 3: Guardian Status, Dependents & Housing */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  وضعیت سرپرستی خانوار
-                </label>
-                <select
-                  value={guardian}
-                  onChange={(e) => setGuardian(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                >
-                  <option value="زن سرپرست خانوار">زن سرپرست خانوار</option>
-                  <option value="سرپرست مرد - ازکارافتاده">سرپرست مرد - ازکارافتاده</option>
-                  <option value="سرپرست مرد - کارگر فصلی">سرپرست مرد - کارگر فصلی</option>
-                  <option value="بدسرپرست">خانواده بدسرپرست</option>
-                  <option value="بی‌سرپرست / یتیم">بی‌سرپرست / یتیم</option>
-                  <option value="تحت تکفل">تحت تکفل اقوام</option>
-                </select>
-              </div>
+            {/* Row 3: Guardian Status, Dependents & Housing (Dynamically shown) */}
+            {(formSchema.builtin.showGuardian ||
+              formSchema.builtin.showDependents ||
+              formSchema.builtin.showHousing) && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {formSchema.builtin.showGuardian && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      {formSchema.builtin.guardianLabel}
+                    </label>
+                    <select
+                      value={guardian}
+                      onChange={(e) => setGuardian(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                    >
+                      {formSchema.guardianOptions.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  تعداد افراد تحت تکفل
-                </label>
-                <div className="flex items-center">
-                  <input
-                    type="number"
-                    min={0}
-                    max={15}
-                    value={dependents}
-                    onChange={(e) => setDependents(Math.max(0, parseInt(e.target.value) || 0))}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                  <span className="mr-2 text-xs text-slate-500 shrink-0">نفر</span>
-                </div>
-              </div>
+                {formSchema.builtin.showDependents && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      تعداد افراد تحت تکفل
+                    </label>
+                    <div className="flex items-center">
+                      <input
+                        type="number"
+                        min={0}
+                        max={15}
+                        value={dependents}
+                        onChange={(e) => setDependents(Math.max(0, parseInt(e.target.value) || 0))}
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                      <span className="mr-2 text-xs text-slate-500 shrink-0">نفر</span>
+                    </div>
+                  </div>
+                )}
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  وضعیت محل سکونت
-                </label>
-                <select
-                  value={housing}
-                  onChange={(e) => setHousing(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                >
-                  <option value="استیجاری">استیجاری (اجاره‌نشین)</option>
-                  <option value="سکونت با اقوام">سکونت مشترک با اقوام</option>
-                  <option value="رهن کامل">رهن کامل بدون اجاره</option>
-                  <option value="ملکی فرسوده">ملکی فرسوده و نیازمند تعمیر</option>
-                  <option value="بی‌سرپناه / اضطراری">بی‌سرپناه / اسکان اضطراری</option>
-                </select>
+                {formSchema.builtin.showHousing && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      {formSchema.builtin.housingLabel}
+                    </label>
+                    <select
+                      value={housing}
+                      onChange={(e) => setHousing(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                    >
+                      {formSchema.housingOptions.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
-            </div>
+            )}
 
-            {/* Row 4: Need Category & Requested Amount */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Row 4: Need Category & Optional Requested Amount */}
+            <div className={`grid grid-cols-1 ${formSchema.builtin.showRequestedAmount ? 'sm:grid-cols-2' : ''} gap-4`}>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  دسته‌بندی موضوع نیاز <span className="text-rose-500">*</span>
+                  {formSchema.builtin.catLabel} <span className="text-rose-500">*</span>
                 </label>
                 <select
                   value={cat}
@@ -431,55 +484,69 @@ export const PublicView: React.FC<PublicViewProps> = ({
                 </select>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  مبلغ تخمینی مورد نیاز (تومان)
-                </label>
-                <input
-                  type="number"
-                  step={500000}
-                  value={requestedAmount}
-                  onChange={(e) => setRequestedAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="مثال: 20000000"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
-                />
-                {typeof requestedAmount === 'number' && requestedAmount > 0 && (
-                  <p className="text-[11px] text-emerald-700 font-medium mt-1">
-                    معادل: {numberToPersianWords(requestedAmount)}
-                  </p>
-                )}
-              </div>
+              {formSchema.builtin.showRequestedAmount && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                    مبلغ تخمینی مورد نیاز (تومان)
+                  </label>
+                  <input
+                    type="number"
+                    step={500000}
+                    value={requestedAmount}
+                    onChange={(e) => setRequestedAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="مثال: 20000000"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                  />
+                  {typeof requestedAmount === 'number' && requestedAmount > 0 && (
+                    <p className="text-[11px] text-emerald-700 font-medium mt-1">
+                      معادل: {numberToPersianWords(requestedAmount)}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
+
+            {/* Dynamic Custom & Entity Fields from Admin Settings */}
+            <DynamicFieldRenderer
+              fields={formSchema.customFields}
+              values={customValues}
+              entities={entities}
+              onChange={setCustomValues}
+            />
 
             {/* Row 5: Detailed Description */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                شرح تفصیلی مشکل و وضعیت اضطرار
-              </label>
-              <textarea
-                rows={3}
-                required
-                value={desc}
-                onChange={(e) => setDesc(e.target.value)}
-                placeholder="توضیح دهید مشکل چیست، چه هزینه‌ای پیش‌بینی شده و چه اقدامات درمانی یا معیشتی تا کنون انجام داده‌اید..."
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
-              />
-            </div>
+            {formSchema.builtin.showDesc && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  {formSchema.builtin.descLabel}
+                </label>
+                <textarea
+                  rows={3}
+                  required
+                  value={desc}
+                  onChange={(e) => setDesc(e.target.value)}
+                  placeholder="توضیح دهید مشکل چیست، چه هزینه‌ای پیش‌بینی شده و چه اقدامات درمانی یا معیشتی تا کنون انجام داده‌اید..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
+                />
+              </div>
+            )}
 
             {/* Row 6: Address */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                آدرس دقیق محل سکونت
-              </label>
-              <input
-                type="text"
-                required
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="نام شهر، منطقه، خیابان اصلی، کوچه، پلاک و طبقه"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
-              />
-            </div>
+            {formSchema.builtin.showAddress && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  {formSchema.builtin.addressLabel}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="نام شهر، منطقه، خیابان اصلی، کوچه، پلاک و طبقه"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
+                />
+              </div>
+            )}
 
             {/* Submit Button */}
             <div className="pt-2">

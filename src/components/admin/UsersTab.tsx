@@ -1,17 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { StaffUser, UserPermissions, PasswordResetRecord } from '../../types';
 import {
-  Users,
   UserPlus,
-  ShieldCheck,
   KeyRound,
   Trash2,
-  CheckCircle,
-  Clock,
-  Lock,
-  User,
   Shield,
-  AlertCircle,
+  Smartphone,
+  Edit2,
+  X,
+  Check,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -27,6 +24,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
   // New User Form State
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('کارشناس مددکاری');
   const [perms, setPerms] = useState<UserPermissions>({
@@ -40,6 +38,17 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  // Edit User Modal State
+  const [editingUser, setEditingUser] = useState<StaffUser | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editRole, setEditRole] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [editIsActive, setEditIsActive] = useState(true);
+  const [editPerms, setEditPerms] = useState<UserPermissions>({});
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState('');
 
   useEffect(() => {
     loadData();
@@ -69,6 +78,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
       await api.createUser({
         name,
         username: username.trim(),
+        phone: phone.trim() || null,
         password,
         role,
         perms,
@@ -76,6 +86,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
       // Reset
       setName('');
       setUsername('');
+      setPhone('');
       setPassword('');
       setRole('کارشناس مددکاری');
       setPerms({
@@ -95,17 +106,53 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
     }
   };
 
+  const openEditModal = (u: StaffUser) => {
+    setEditingUser(u);
+    setEditName(u.name);
+    setEditPhone(u.phone || '');
+    setEditRole(u.role);
+    setEditPassword('');
+    setEditIsActive(u.isActive !== false);
+    setEditPerms({ ...(u.perms || {}) });
+    setEditError('');
+  };
+
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setEditError('');
+    setEditSubmitting(true);
+    try {
+      const payload: any = {
+        name: editName,
+        phone: editPhone.trim() || null,
+        role: editRole,
+        isActive: editingUser.username === 'admin' ? true : editIsActive,
+        perms: editPerms,
+      };
+      if (editPassword.trim()) {
+        payload.password = editPassword.trim();
+      }
+      await api.updateUser(editingUser.id, payload);
+      setEditingUser(null);
+      loadData();
+    } catch (err: any) {
+      setEditError(err.message || 'خطا در به‌روزرسانی اطلاعات کاربر');
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
   const handleDeleteUser = async (user: StaffUser) => {
     if (user.username === 'admin') {
-      alert('کاربر مدیر عامل اصلی قابل حذف نیست.');
       return;
     }
-    if (!confirm(`آیا از حذف دسترسی کاربر «${user.name}» اطمینان دارید؟`)) return;
+    if (!window.confirm(`آیا از حذف دسترسی کاربر «${user.name}» اطمینان دارید؟`)) return;
     try {
       await api.deleteUser(user.id);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'خطا در حذف کاربر');
+      setError(err.message || 'خطا در حذف کاربر');
     }
   };
 
@@ -114,7 +161,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
       await api.resolvePasswordReset(id, 'RESOLVED');
       loadData();
     } catch {
-      alert('خطا در تعیین وضعیت درخواست');
+      setError('خطا در تعیین وضعیت درخواست');
     }
   };
 
@@ -168,12 +215,25 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
 
             <div>
               <label className="block font-semibold text-slate-700 mb-1">
+                شماره موبایل (جهت ورود پیامکی)
+              </label>
+              <input
+                type="tel"
+                placeholder="09123456789"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500 font-mono dir-ltr text-right"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">
                 کلمه عبور اولیه
               </label>
               <input
                 type="password"
                 required
-                placeholder="••••••"
+                placeholder="حداقل ۶ کاراکتر"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500 font-mono dir-ltr text-right"
@@ -292,7 +352,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
                 فهرست پرسنل و کاربران دارای دسترسی
               </h4>
               <span className="text-xs text-slate-500">
-                {users.length} کاربر ثبت‌شده
+                {loading ? '...' : `${users.length} کاربر ثبت‌شده`}
               </span>
             </div>
 
@@ -301,7 +361,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
                 <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                   <tr>
                     <th className="py-3 px-4">مشخصات کاربر</th>
-                    <th className="py-3 px-4">نام کاربری</th>
+                    <th className="py-3 px-4">نام کاربری / موبایل</th>
                     <th className="py-3 px-4">نقش سازمانی</th>
                     <th className="py-3 px-4">مجوزهای فعال</th>
                     <th className="py-3 px-4 text-center">عملیات</th>
@@ -309,13 +369,26 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
                   {users.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-50/70 transition">
+                    <tr key={u.id} className={`hover:bg-slate-50/70 transition ${u.isActive === false ? 'opacity-60' : ''}`}>
                       <td className="py-3 px-4 font-bold text-slate-900">
-                        {u.name}
+                        <div>{u.name}</div>
+                        {u.isActive === false && (
+                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 text-[10px]">
+                            غیرفعال
+                          </span>
+                        )}
                       </td>
 
-                      <td className="py-3 px-4 font-mono text-emerald-800">
-                        @{u.username}
+                      <td className="py-3 px-4 space-y-0.5">
+                        <div className="font-mono text-emerald-800 dir-ltr text-right">@{u.username}</div>
+                        {u.phone ? (
+                          <div className="font-mono text-[11px] text-slate-500 flex items-center gap-1 justify-end dir-ltr">
+                            <span>{u.phone}</span>
+                            <Smartphone className="w-3 h-3 text-emerald-600" />
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-amber-600">موبایل ثبت نشده</span>
+                        )}
                       </td>
 
                       <td className="py-3 px-4">
@@ -365,17 +438,27 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
                       </td>
 
                       <td className="py-3 px-4 text-center">
-                        {u.username !== 'admin' ? (
+                        <div className="inline-flex items-center gap-1">
                           <button
-                            onClick={() => handleDeleteUser(u)}
-                            title="حذف دسترسی کاربر"
-                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition"
+                            onClick={() => openEditModal(u)}
+                            title="ویرایش کاربر و شماره موبایل"
+                            className="p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Edit2 className="w-4 h-4" />
                           </button>
-                        ) : (
-                          <span className="text-[10px] text-slate-400 font-bold">مدیر اصلی</span>
-                        )}
+
+                          {u.username !== 'admin' ? (
+                            <button
+                              onClick={() => handleDeleteUser(u)}
+                              title="حذف دسترسی کاربر"
+                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-bold px-1">مدیر اصلی</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -454,6 +537,143 @@ export const UsersTab: React.FC<UsersTabProps> = ({ currentUser }) => {
           </div>
         </div>
       </div>
+
+      {/* Edit User Modal */}
+      {editingUser && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-bold text-sm text-slate-900">
+                  ویرایش کاربر: {editingUser.name} (@{editingUser.username})
+                </h3>
+              </div>
+              <button
+                onClick={() => setEditingUser(null)}
+                className="p-1 text-slate-400 hover:text-slate-700 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {editError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs">
+                {editError}
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateUser} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">نام و نام خانوادگی</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">سمت / عنوان نقش</label>
+                  <input
+                    type="text"
+                    required
+                    value={editRole}
+                    onChange={(e) => setEditRole(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    شماره موبایل (جهت ورود پیامکی)
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="09123456789"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500 font-mono dir-ltr text-right"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    تغییر رمز عبور (اختیاری)
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="در صورت عدم تغییر خالی بگذارید"
+                    value={editPassword}
+                    onChange={(e) => setEditPassword(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500 dir-ltr text-right"
+                  />
+                </div>
+              </div>
+
+              {editingUser.username !== 'admin' && (
+                <label className="flex items-center gap-2 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={editIsActive}
+                    onChange={(e) => setEditIsActive(e.target.checked)}
+                    className="rounded text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="font-semibold text-slate-700">حساب کاربری فعال باشد</span>
+                </label>
+              )}
+
+              <div className="pt-2 border-t border-slate-100 space-y-2">
+                <span className="font-bold text-slate-800 block">مجوزها و سطوح دسترسی:</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {[
+                    { key: 'viewInbox', label: 'مشاهده کارتابل نیازمندان' },
+                    { key: 'decideInbox', label: 'تصویب مبالغ نیازمندان' },
+                    { key: 'viewProg', label: 'مشاهده طرح‌ها و پروژه‌ها' },
+                    { key: 'createProg', label: 'ثبت طرح‌های جدید' },
+                    { key: 'decideProg', label: 'تصویب بودجه طرح‌ها' },
+                    { key: 'viewFin', label: 'مشاهده گزارشات مالی' },
+                    { key: 'manageSettings', label: 'مدیریت تنظیمات و سیستم' },
+                  ].map((item) => (
+                    <label key={item.key} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean((editPerms as any)[item.key])}
+                        onChange={(e) =>
+                          setEditPerms({ ...editPerms, [item.key]: e.target.checked })
+                        }
+                        className="rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="text-slate-700">{item.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingUser(null)}
+                  className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="submit"
+                  disabled={editSubmitting}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow inline-flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  {editSubmitting ? 'در حال ذخیره...' : 'ذخیره تغییرات'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

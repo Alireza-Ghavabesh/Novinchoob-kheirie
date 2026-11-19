@@ -20,6 +20,7 @@ interface HeaderProps {
   activeView: 'public' | 'login' | 'admin';
   onNavigate: (view: 'public' | 'login' | 'admin') => void;
   onLogout: () => void;
+  standalone?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -28,13 +29,14 @@ export const Header: React.FC<HeaderProps> = ({
   activeView,
   onNavigate,
   onLogout,
+  standalone = false,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const instName = config?.instName || 'مؤسسه خیریه حضرت ام‌البنین (س)';
-  const subtitle = 'سامانه خدمات و نیازسنجی مردمی';
 
   const handleNav = (view: 'public' | 'login' | 'admin') => {
+    if (standalone) return;
     onNavigate(view);
     setMobileMenuOpen(false);
   };
@@ -45,8 +47,8 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center justify-between h-16 sm:h-20">
           {/* Logo & Institution Brand */}
           <div
-            onClick={() => handleNav('public')}
-            className="flex items-center gap-2 sm:gap-3 cursor-pointer group min-w-0"
+            onClick={() => !standalone && handleNav('public')}
+            className={`flex items-center gap-2 sm:gap-3 min-w-0 ${standalone ? '' : 'cursor-pointer group'}`}
           >
             {/* Logo Emblem */}
             <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-br from-amber-400 via-amber-500 to-amber-600 p-0.5 shadow-md group-hover:scale-105 transition-transform shrink-0 flex items-center justify-center">
@@ -74,6 +76,13 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
+          {standalone ? (
+            <div className="flex items-center gap-2 bg-emerald-950/70 px-3 py-1.5 rounded-xl border border-emerald-700/40 text-[11px] sm:text-xs text-emerald-100 font-semibold">
+              <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 shrink-0" />
+              <span>فرم عمومی پذیرش و پیگیری پرونده</span>
+            </div>
+          ) : (
+          <>
           {/* Desktop Navigation Controls */}
           <div className="hidden sm:flex items-center gap-2 lg:gap-3">
             {/* Public Form link */}
@@ -186,11 +195,13 @@ export const Header: React.FC<HeaderProps> = ({
               {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
             </button>
           </div>
+          </>
+          )}
         </div>
       </div>
 
       {/* Mobile Dropdown Drawer */}
-      {mobileMenuOpen && (
+      {!standalone && mobileMenuOpen && (
         <div className="sm:hidden bg-emerald-950/95 border-b border-emerald-800/80 p-4 space-y-3 backdrop-blur-lg animate-in slide-in-from-top-2 duration-200 shadow-xl">
           {/* User Status on mobile drawer if logged in */}
           {currentUser && (

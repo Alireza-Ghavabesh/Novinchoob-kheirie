@@ -6,6 +6,17 @@ export interface AppConfig {
   phone: string;
   address: string;
   notice: string;
+  loginTitle?: string;
+  loginSubtitle?: string;
+  loginWelcomeNote?: string;
+  loginFooterText?: string;
+  loginTheme?: 'emerald' | 'teal' | 'slate' | 'amber' | 'indigo' | string;
+  loginBgDataUrl?: string | null;
+  loginShowLogo?: boolean;
+  loginAllowPassword?: boolean;
+  loginAllowOtp?: boolean;
+  loginShowBackLink?: boolean;
+  publicFormConfig?: string;
 }
 
 export interface Category {
@@ -32,6 +43,7 @@ export interface BeneficiaryRequest {
   note?: string | null;
   approvedDate?: string | null;
   approvedBy?: string | null;
+  customFields?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,6 +93,7 @@ export interface SmsConfig {
   apiKey: string;
   senderLine: string;
   provider: 'GHASEDAK' | 'CUSTOM';
+  loginOtpTemplate?: string;
   isEnabled: boolean;
   updatedAt?: string;
 }
@@ -113,9 +126,17 @@ export interface SmsRule {
   templateParam2?: string | null;
   templateParam3?: string | null;
   messageBody: string;
+  sendPush?: boolean;
   isActive: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface PushDevice {
+  id: number;
+  username: string;
+  userAgent?: string;
+  createdAt: string;
 }
 
 export interface SmsLog {
@@ -135,6 +156,7 @@ export interface StaffUser {
   id: string;
   username: string;
   name: string;
+  phone?: string | null;
   role: string;
   perms: UserPermissions;
   isActive?: boolean;
@@ -169,3 +191,32 @@ export interface FinanceSummary {
   reqCategoryBreakdown: Record<string, { count: number; approvedCount: number; approvedAmount: number }>;
   progCategoryBreakdown: Record<string, { count: number; approvedCount: number; approvedBudget: number }>;
 }
+
+export interface CustomForm {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  heroBadge: string;
+  theme: string;
+  submitButtonText: string;
+  successMessage: string;
+  isActive: boolean;
+  showTracking: boolean;
+  fields: import('../utils/publicFormConfig').CustomFormField[];
+  submissionsCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CustomFormSubmission {
+  id: number;
+  trackingCode: string;
+  formId: string;
+  data: import('../utils/publicFormConfig').SubmittedCustomFieldValue[];
+  status: 'NEW' | 'REVIEWED' | 'ARCHIVED';
+  note?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+

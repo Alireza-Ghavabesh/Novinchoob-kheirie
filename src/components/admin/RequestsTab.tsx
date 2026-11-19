@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
+  AppConfig,
   BeneficiaryRequest,
   Category,
   StaffUser,
@@ -10,6 +11,17 @@ import {
   toPersianDigits,
   getTodayShamsi,
 } from '../../utils/persian';
+import {
+  EntityDefinition,
+  formatEntityRowSummary,
+  parsePublicFormSchema,
+  parseSubmittedCustomFields,
+} from '../../utils/publicFormConfig';
+import {
+  DynamicFieldRenderer,
+  DynamicFormValuesMap,
+  validateAndExtractCustomFields,
+} from '../DynamicFieldRenderer';
 import {
   Search,
   Filter,
@@ -36,6 +48,8 @@ interface RequestsTabProps {
   requests: BeneficiaryRequest[];
   needCategories: Category[];
   currentUser: StaffUser;
+  config?: AppConfig | null;
+  entities?: EntityDefinition[];
   onRefresh: () => void;
 }
 
@@ -43,8 +57,15 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
   requests,
   needCategories,
   currentUser,
+  config,
+  entities = [],
   onRefresh,
 }) => {
+  const formSchema = useMemo(
+    () => parsePublicFormSchema(config?.publicFormConfig),
+    [config?.publicFormConfig]
+  );
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [catFilter, setCatFilter] = useState('ALL');
@@ -67,17 +88,31 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
   const [newReqName, setNewReqName] = useState('');
   const [newReqNid, setNewReqNid] = useState('');
   const [newReqPhone, setNewReqPhone] = useState('');
-  const [newReqGuardian, setNewReqGuardian] = useState('زن سرپرست خانوار');
+  const [newReqGuardian, setNewReqGuardian] = useState(
+    () => formSchema.guardianOptions[0] || 'زن سرپرست خانوار'
+  );
   const [newReqDependents, setNewReqDependents] = useState(2);
-  const [newReqHousing, setNewReqHousing] = useState('استیجاری');
+  const [newReqHousing, setNewReqHousing] = useState(
+    () => formSchema.housingOptions[0] || 'استیجاری'
+  );
   const [newReqCat, setNewReqCat] = useState('');
   const [newReqAmount, setNewReqAmount] = useState<number>(10000000);
   const [newReqDesc, setNewReqDesc] = useState('');
   const [newReqAddress, setNewReqAddress] = useState('');
+  const [newCustomValues, setNewCustomValues] = useState<DynamicFormValuesMap>({});
   const [createSubmitting, setCreateSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (formSchema.guardianOptions.length > 0 && !formSchema.guardianOptions.includes(newReqGuardian)) {
+      setNewReqGuardian(formSchema.guardianOptions[0]);
+    }
+    if (formSchema.housingOptions.length > 0 && !formSchema.housingOptions.includes(newReqHousing)) {
+      setNewReqHousing(formSchema.housingOptions[0]);
+    }
+  }, [formSchema.guardianOptions, formSchema.housingOptions, newReqGuardian, newReqHousing]);
+
   // Permissions
-  const canDecide = !!currentUser.perms.decideInbox;
+  const canDecide = currentUser.username === 'admin' || Boolean(currentUser.perms?.decideInbox);
 
   // KPIs
   const totalCount = requests.length;
@@ -191,22 +226,34 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
 
   const handleCreateManual = async (e: React.FormEvent) => {
     e.preventDefault();
+    const extracted = validateAndExtractCustomFields(
+      formSchema.customFields,
+      newCustomValues,
+      entities
+    );
+    if (extracted.error) {
+      alert(extracted.error);
+      return;
+    }
+
     setCreateSubmitting(true);
     try {
       const today = getTodayShamsi();
       const selectedCat = newReqCat || (needCategories[0]?.name || 'درمان و هزینه‌های پزشکی');
+
       await api.createRequest({
         name: newReqName,
         nid: newReqNid,
         phone: newReqPhone,
         birthDate: today.formatted,
-        guardian: newReqGuardian,
-        dependents: newReqDependents,
-        housing: newReqHousing,
+        guardian: formSchema.builtin.showGuardian ? newReqGuardian : '-',
+        dependents: formSchema.builtin.showDependents ? newReqDependents : 0,
+        housing: formSchema.builtin.showHousing ? newReqHousing : '-',
         cat: selectedCat,
-        requestedAmount: newReqAmount,
-        desc: newReqDesc,
-        address: newReqAddress,
+        requestedAmount: formSchema.builtin.showRequestedAmount ? newReqAmount : 0,
+        desc: newReqDesc.trim() || '-',
+        address: newReqAddress.trim() || '-',
+        customFields: extracted.values,
       });
       setShowCreateModal(false);
       // Reset form
@@ -215,12 +262,21 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
       setNewReqPhone('');
       setNewReqDesc('');
       setNewReqAddress('');
+      setNewCustomValues({});
       onRefresh();
     } catch (err: any) {
       alert(err.message || 'خطا در ثبت پرونده');
     } finally {
       setCreateSubmitting(false);
     }
+  };
+
+  const escapeCsvCell = (val: string | number) => {
+    const str = String(val ?? '');
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
   };
 
   const exportCSV = () => {
@@ -231,31 +287,46 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
       'شماره تماس',
       'سرپرستی',
       'عائله',
+      'مسکن',
       'موضوع نیاز',
       'مبلغ درخواستی',
       'مبلغ مصوب',
       'وضعیت',
       'تاریخ مصوبه',
       'تاییدکننده',
+      'فیلدهای تکمیلی',
     ];
-    const rows = filteredRequests.map((r) => [
-      r.trackingCode,
-      r.name,
-      r.nid,
-      r.phone,
-      r.guardian,
-      r.dependents,
-      r.cat,
-      r.requestedAmount,
-      r.approvedAmount,
-      r.status,
-      r.approvedDate || '',
-      r.approvedBy || '',
-    ]);
+    const rows = filteredRequests.map((r) => {
+      const extras = parseSubmittedCustomFields(r.customFields)
+        .map((cf) => {
+          if (cf.type === 'entity_list' && Array.isArray(cf.items)) {
+            const subRows = cf.items.map((it, idx) => formatEntityRowSummary(it, idx)).join(' // ');
+            return `${cf.label}: [${subRows}]`;
+          }
+          return `${cf.label}: ${cf.value}`;
+        })
+        .join(' | ');
+      return [
+        r.trackingCode,
+        r.name,
+        r.nid,
+        r.phone,
+        r.guardian,
+        r.dependents,
+        r.housing,
+        r.cat,
+        r.requestedAmount,
+        r.approvedAmount,
+        r.status,
+        r.approvedDate || '',
+        r.approvedBy || '',
+        extras,
+      ].map(escapeCsvCell);
+    });
 
     const csvContent =
       'data:text/csv;charset=utf-8,\uFEFF' +
-      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+      [headers.map(escapeCsvCell).join(','), ...rows.map((e) => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
@@ -750,19 +821,80 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                 )}
               </div>
 
-              <div>
-                <span className="font-semibold text-slate-700 block mb-1">شرح وضعیت و نیاز:</span>
-                <p className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 leading-relaxed">
-                  {viewDetailsReq.desc}
-                </p>
-              </div>
+              {viewDetailsReq.desc && viewDetailsReq.desc !== '-' && (
+                <div>
+                  <span className="font-semibold text-slate-700 block mb-1">شرح وضعیت و نیاز:</span>
+                  <p className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 leading-relaxed">
+                    {viewDetailsReq.desc}
+                  </p>
+                </div>
+              )}
 
-              <div>
-                <span className="font-semibold text-slate-700 block mb-1">آدرس سکونت:</span>
-                <p className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800">
-                  {viewDetailsReq.address}
-                </p>
-              </div>
+              {viewDetailsReq.address && viewDetailsReq.address !== '-' && (
+                <div>
+                  <span className="font-semibold text-slate-700 block mb-1">آدرس سکونت:</span>
+                  <p className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800">
+                    {viewDetailsReq.address}
+                  </p>
+                </div>
+              )}
+
+              {(() => {
+                const customItems = parseSubmittedCustomFields(viewDetailsReq.customFields);
+                if (customItems.length === 0) return null;
+                return (
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                    <span className="font-bold text-slate-800 block text-xs border-b border-slate-200 pb-1.5">
+                      اطلاعات تکمیلی و موجودیت‌های ثبت‌شده در فرم
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      {customItems.map((item) =>
+                        item.type === 'entity_list' && Array.isArray(item.items) ? (
+                          <div
+                            key={item.id}
+                            className="sm:col-span-2 bg-white p-3 rounded-xl border border-emerald-200 space-y-2"
+                          >
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                              <span className="font-bold text-emerald-900">{item.label}</span>
+                              <span className="text-[11px] text-emerald-700 font-semibold">
+                                {toPersianDigits(item.items.length)} مورد
+                              </span>
+                            </div>
+                            {item.items.length === 0 ? (
+                              <span className="text-slate-400 text-[11px]">موردی ثبت نشده</span>
+                            ) : (
+                              <div className="space-y-2">
+                                {item.items.map((row, rIdx) => (
+                                  <div
+                                    key={rIdx}
+                                    className="p-2.5 rounded-lg bg-emerald-50/40 border border-emerald-100 grid grid-cols-1 sm:grid-cols-3 gap-2"
+                                  >
+                                    {Object.entries(row).map(([k, v]) => (
+                                      <div key={k}>
+                                        <span className="text-[10px] text-slate-500 block">
+                                          {k}:
+                                        </span>
+                                        <span className="font-bold text-slate-900">{v || '-'}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div key={item.id} className="bg-white p-2.5 rounded-xl border border-slate-200/80">
+                            <span className="text-slate-500 block text-[11px] mb-0.5">{item.label}:</span>
+                            <span className="font-bold text-slate-900 whitespace-pre-wrap">
+                              {item.value || '-'}
+                            </span>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {viewDetailsReq.note && (
                 <div>
@@ -868,13 +1000,56 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                 </div>
               </div>
 
+              {(formSchema.builtin.showGuardian || formSchema.builtin.showHousing) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {formSchema.builtin.showGuardian && (
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        {formSchema.builtin.guardianLabel}
+                      </label>
+                      <select
+                        value={newReqGuardian}
+                        onChange={(e) => setNewReqGuardian(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none bg-white"
+                      >
+                        {formSchema.guardianOptions.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {formSchema.builtin.showHousing && (
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        {formSchema.builtin.housingLabel}
+                      </label>
+                      <select
+                        value={newReqHousing}
+                        onChange={(e) => setNewReqHousing(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none bg-white"
+                      >
+                        {formSchema.housingOptions.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">دسته‌بندی نیاز</label>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    {formSchema.builtin.catLabel}
+                  </label>
                   <select
                     value={newReqCat}
                     onChange={(e) => setNewReqCat(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none bg-white"
                   >
                     {needCategories.map((c) => (
                       <option key={c.id} value={c.name}>
@@ -883,39 +1058,62 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                     ))}
                   </select>
                 </div>
+                {formSchema.builtin.showRequestedAmount && (
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">مبلغ درخواستی (تومان)</label>
+                    <input
+                      type="number"
+                      step={500000}
+                      value={newReqAmount}
+                      onChange={(e) => setNewReqAmount(Number(e.target.value) || 0)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none font-mono"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {formSchema.builtin.showDesc && (
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">مبلغ درخواستی (تومان)</label>
-                  <input
-                    type="number"
-                    step={500000}
-                    value={newReqAmount}
-                    onChange={(e) => setNewReqAmount(Number(e.target.value) || 0)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none font-mono"
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    {formSchema.builtin.descLabel}
+                  </label>
+                  <textarea
+                    rows={2}
+                    required
+                    value={newReqDesc}
+                    onChange={(e) => setNewReqDesc(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none"
                   />
                 </div>
-              </div>
+              )}
 
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">شرح نیاز</label>
-                <textarea
-                  rows={2}
-                  required
-                  value={newReqDesc}
-                  onChange={(e) => setNewReqDesc(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none"
-                />
-              </div>
+              {formSchema.builtin.showAddress && (
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    {formSchema.builtin.addressLabel}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newReqAddress}
+                    onChange={(e) => setNewReqAddress(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none"
+                  />
+                </div>
+              )}
 
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">آدرس سکونت</label>
-                <input
-                  type="text"
-                  required
-                  value={newReqAddress}
-                  onChange={(e) => setNewReqAddress(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none"
-                />
-              </div>
+              {formSchema.customFields.filter((f) => f.enabled !== false).length > 0 && (
+                <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                  <span className="block font-bold text-slate-700">فیلدهای سفارشی و موجودیتی فرم</span>
+                  <DynamicFieldRenderer
+                    fields={formSchema.customFields}
+                    values={newCustomValues}
+                    entities={entities}
+                    onChange={setNewCustomValues}
+                    compact
+                  />
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button

@@ -65,8 +65,8 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
   const [logNote, setLogNote] = useState('');
   const [savingPipeline, setSavingPipeline] = useState(false);
 
-  const canCreate = !!currentUser.perms.createProg;
-  const canDecide = !!currentUser.perms.decideProg;
+  const canCreate = currentUser.username === 'admin' || Boolean(currentUser.perms?.createProg);
+  const canDecide = currentUser.username === 'admin' || Boolean(currentUser.perms?.decideProg);
 
   // Pipeline Stages definition
   const PIPELINE_STAGES = [
