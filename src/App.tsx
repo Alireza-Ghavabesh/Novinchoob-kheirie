@@ -406,6 +406,7 @@ export default function App() {
               <BeneficiaryPortalView
                 beneficiary={currentBeneficiary}
                 config={config}
+                needCategories={needCategories}
                 entities={entities}
                 onLogout={handleBeneficiaryLogout}
                 onBackToPublic={() => navigateTo('public')}

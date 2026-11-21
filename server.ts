@@ -176,7 +176,38 @@ async function ensureDatabaseSchema(): Promise<void> {
       { table: 'CustomFormSubmission', column: 'expertMessage', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "expertMessage" TEXT` },
       { table: 'CustomFormSubmission', column: 'expertMessageAt', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "expertMessageAt" DATETIME` },
       { table: 'CustomFormSubmission', column: 'expertMessageBy', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "expertMessageBy" TEXT` },
+      { table: 'PushSubscription', column: 'beneficiaryId', ddl: `ALTER TABLE "PushSubscription" ADD COLUMN "beneficiaryId" TEXT` },
+      { table: 'PushSubscription', column: 'beneficiaryPhone', ddl: `ALTER TABLE "PushSubscription" ADD COLUMN "beneficiaryPhone" TEXT` },
     ];
+
+    try {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "BeneficiaryNotification" (
+          "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+          "beneficiaryId" TEXT,
+          "phone" TEXT,
+          "title" TEXT NOT NULL,
+          "message" TEXT NOT NULL,
+          "type" TEXT NOT NULL DEFAULT 'EXPERT_MESSAGE',
+          "formId" TEXT,
+          "formTitle" TEXT,
+          "trackingCode" TEXT,
+          "senderName" TEXT,
+          "isRead" BOOLEAN NOT NULL DEFAULT false,
+          "sentSms" BOOLEAN NOT NULL DEFAULT false,
+          "sentPush" BOOLEAN NOT NULL DEFAULT false,
+          "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await prisma.$executeRawUnsafe(
+        `CREATE INDEX IF NOT EXISTS "BeneficiaryNotification_beneficiaryId_idx" ON "BeneficiaryNotification"("beneficiaryId")`
+      );
+      await prisma.$executeRawUnsafe(
+        `CREATE INDEX IF NOT EXISTS "BeneficiaryNotification_phone_idx" ON "BeneficiaryNotification"("phone")`
+      );
+    } catch (err) {
+      console.error('[DB Auto-Migrate] Failed ensuring BeneficiaryNotification table:', err);
+    }
 
     const tableColsCache = new Map<string, Set<string>>();
     for (const m of migrations) {
@@ -3160,6 +3191,219 @@ app.get(
   }
 );
 
+async function dispatchBeneficiaryNotification(params: {
+  beneficiaryId?: string | null;
+  phone?: string | null;
+  title: string;
+  message: string;
+  type?: string;
+  formId?: string | null;
+  formTitle?: string | null;
+  trackingCode?: string | null;
+  senderName?: string | null;
+  sendInApp?: boolean;
+  sendSms?: boolean;
+  sendPush?: boolean;
+}) {
+  const cleanMsg = String(params.message || '').trim();
+  const cleanTitle = String(params.title || 'پیام جدید از واحد مددکاری').trim();
+  let resolvedBeneficiaryId: string | null = params.beneficiaryId || null;
+  let resolvedPhone: string | null = normalizeIranMobile(String(params.phone || '')) || null;
+
+  if (!resolvedPhone && resolvedBeneficiaryId) {
+    const acc = await prisma.beneficiaryAccount.findUnique({ where: { id: resolvedBeneficiaryId } });
+    if (acc?.phone) resolvedPhone = normalizeIranMobile(acc.phone) || acc.phone;
+  } else if (!resolvedBeneficiaryId && resolvedPhone) {
+    const acc = await prisma.beneficiaryAccount.findFirst({
+      where: { OR: [{ phone: resolvedPhone }, { phone: String(params.phone || '').trim() }] },
+    });
+    if (acc) resolvedBeneficiaryId = acc.id;
+  }
+
+  const smsResult: { attempted: boolean; sent: boolean; receptor?: string; error?: string } = {
+    attempted: Boolean(params.sendSms),
+    sent: false,
+    receptor: resolvedPhone || undefined,
+  };
+
+  if (params.sendSms) {
+    if (!resolvedPhone) {
+      smsResult.error = 'شماره موبایل معتبری برای این مددجو یافت نشد.';
+    } else {
+      const smsCfg = await prisma.smsConfig.findUnique({ where: { id: 1 } });
+      if (!smsCfg || !smsCfg.isEnabled) {
+        smsResult.error = 'سرویس پیامک در تنظیمات غیرفعال است.';
+      } else if (!smsCfg.apiKey || smsCfg.apiKey === 'DEMO_KEY') {
+        smsResult.error = 'توکن پنل پیامک (قاصدک) تنظیم نشده است.';
+      } else {
+        const res = await smsService.sendGhasedak(
+          smsCfg.apiKey,
+          smsCfg.senderLine,
+          resolvedPhone,
+          cleanMsg
+        );
+        smsResult.sent = res.success;
+        if (!res.success) smsResult.error = res.error || 'خطا در ارسال پیامک';
+
+        await prisma.smsLog
+          .create({
+            data: {
+              ruleTitle: cleanTitle,
+              eventType: 'EXPERT_DIRECT_MESSAGE',
+              receptor: resolvedPhone,
+              message: cleanMsg,
+              status: res.success ? 'SUCCESS' : 'FAILED',
+              providerMsgId: res.messageId || null,
+              cost: res.cost ?? null,
+              errorDetails: res.error || null,
+            },
+          })
+          .catch(() => undefined);
+      }
+    }
+  }
+
+  const pushResult: { attempted: boolean; sentCount: number; failedCount: number; error?: string } = {
+    attempted: Boolean(params.sendPush),
+    sentCount: 0,
+    failedCount: 0,
+  };
+
+  if (params.sendPush) {
+    if (!resolvedBeneficiaryId && !resolvedPhone) {
+      pushResult.error = 'شناسه یا شماره موبایل مددجو برای ارسال پوش نوتیفیکیشن مشخص نیست.';
+    } else {
+      const appCfg = await prisma.appConfig.findUnique({ where: { id: 1 } });
+      const portalUrl = `/${appCfg?.beneficiaryLoginSlug || 'beneficiary'}`;
+      const res = await pushService.sendBeneficiaryNotification({
+        title: cleanTitle,
+        body: cleanMsg,
+        url: portalUrl,
+        beneficiaryId: resolvedBeneficiaryId,
+        phone: resolvedPhone,
+      });
+      pushResult.sentCount = res.sentCount;
+      pushResult.failedCount = res.failedCount;
+      if (res.sentCount === 0 && res.failedCount === 0) {
+        pushResult.error = 'این مددجو هنوز پوش نوتیفیکیشن را در پروفایل خود فعال نکرده است.';
+      }
+    }
+  }
+
+  const inAppResult: { attempted: boolean; created: boolean; notificationId?: number } = {
+    attempted: params.sendInApp !== false,
+    created: false,
+  };
+
+  if (params.sendInApp !== false && cleanMsg) {
+    const createdNotif = await prisma.beneficiaryNotification.create({
+      data: {
+        beneficiaryId: resolvedBeneficiaryId,
+        phone: resolvedPhone,
+        title: cleanTitle,
+        message: cleanMsg,
+        type: params.type || 'EXPERT_MESSAGE',
+        formId: params.formId || null,
+        formTitle: params.formTitle || null,
+        trackingCode: params.trackingCode || null,
+        senderName: params.senderName || 'کارشناس مددکاری',
+        isRead: false,
+        sentSms: smsResult.sent,
+        sentPush: pushResult.sentCount > 0,
+      },
+    });
+    inAppResult.created = true;
+    inAppResult.notificationId = createdNotif.id;
+  }
+
+  return {
+    inApp: inAppResult,
+    sms: smsResult,
+    push: pushResult,
+  };
+}
+
+app.post(
+  '/api/admin/beneficiary-notify',
+  requireAuth,
+  requirePerm('viewInbox', 'decideInbox', 'manageSettings'),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const {
+        requestId,
+        beneficiaryId,
+        phone,
+        title,
+        message,
+        formId,
+        formTitle,
+        trackingCode,
+        sendInApp = true,
+        sendSms = false,
+        sendPush = false,
+        alsoSaveNote = false,
+        nextRequestStatus,
+      } = req.body || {};
+
+      const cleanMsg = String(message || '').trim();
+      if (!cleanMsg) {
+        return res.status(400).json({ error: 'متن پیام نمی‌تواند خالی باشد.' });
+      }
+
+      let resolvedBeneficiaryId: string | null = beneficiaryId || null;
+      let resolvedPhone: string | null = phone || null;
+      let resolvedTrackingCode: string | null = trackingCode || null;
+      let resolvedFormId: string | null = formId || null;
+      let resolvedFormTitle: string | null = formTitle || null;
+
+      if (requestId) {
+        const reqRecord = await prisma.beneficiaryRequest.findUnique({
+          where: { id: Number(requestId) },
+        });
+        if (reqRecord) {
+          resolvedBeneficiaryId = resolvedBeneficiaryId || reqRecord.beneficiaryId || null;
+          resolvedPhone = resolvedPhone || reqRecord.phone || null;
+          resolvedTrackingCode = resolvedTrackingCode || reqRecord.trackingCode;
+          resolvedFormId = resolvedFormId || 'PUBLIC_REQUEST';
+          resolvedFormTitle = resolvedFormTitle || 'فرم درخواست عمومی';
+
+          if (alsoSaveNote || nextRequestStatus) {
+            const updateData: any = {};
+            if (alsoSaveNote) updateData.note = cleanMsg;
+            if (nextRequestStatus) updateData.status = String(nextRequestStatus);
+            await prisma.beneficiaryRequest.update({
+              where: { id: reqRecord.id },
+              data: updateData,
+            });
+          }
+        }
+      }
+
+      const senderName = req.authUser?.name || req.authUser?.username || 'کارشناس';
+      const result = await dispatchBeneficiaryNotification({
+        beneficiaryId: resolvedBeneficiaryId,
+        phone: resolvedPhone,
+        title:
+          String(title || '').trim() ||
+          (resolvedFormTitle ? `پیام کارشناس درباره ${resolvedFormTitle}` : 'پیام جدید از واحد مددکاری'),
+        message: cleanMsg,
+        type: nextRequestStatus === 'NEEDS_INFO' ? 'NEEDS_INFO' : 'EXPERT_MESSAGE',
+        formId: resolvedFormId,
+        formTitle: resolvedFormTitle,
+        trackingCode: resolvedTrackingCode,
+        senderName,
+        sendInApp: Boolean(sendInApp),
+        sendSms: Boolean(sendSms),
+        sendPush: Boolean(sendPush),
+      });
+
+      res.json({ success: true, result });
+    } catch (error) {
+      res.status(500).json({ error: 'خطا در ارسال اعلان به مددجو', details: String(error) });
+    }
+  }
+);
+
 app.patch(
   '/api/forms/submissions/:submissionId',
   requireAuth,
@@ -3167,7 +3411,7 @@ app.patch(
   async (req: AuthenticatedRequest, res) => {
     try {
       const id = parseInt(req.params.submissionId);
-      const { status, note, expertMessage, sendSms } = req.body;
+      const { status, note, expertMessage, sendSms, sendInApp, sendDirectSms, sendPush } = req.body;
 
       const existing = await prisma.customFormSubmission.findUnique({
         where: { id },
@@ -3177,6 +3421,7 @@ app.patch(
         return res.status(404).json({ error: 'رکورد مورد نظر یافت نشد.' });
       }
 
+      const senderName = req.authUser?.name || req.authUser?.username || 'کارشناس';
       const data: any = {};
       if (status) data.status = String(status);
       if (note !== undefined) data.note = note;
@@ -3185,7 +3430,7 @@ app.patch(
         data.expertMessage = cleanMsg || null;
         if (cleanMsg) {
           data.expertMessageAt = new Date();
-          data.expertMessageBy = req.authUser?.name || req.authUser?.username || 'کارشناس';
+          data.expertMessageBy = senderName;
         }
       }
 
@@ -3195,6 +3440,7 @@ app.patch(
         include: { form: true, beneficiary: true },
       });
 
+      const submittedData = safeJsonParseArray(updated.data);
       const events: FormSmsEventType[] = [];
       const cleanNewExpertMsg = String(updated.expertMessage || '').trim();
       const prevExpertMsg = String(existing.expertMessage || '').trim();
@@ -3211,14 +3457,47 @@ app.patch(
           form: updated.form,
           submission: updated,
           beneficiary: updated.beneficiary,
-          submittedData: safeJsonParseArray(updated.data),
+          submittedData,
           events,
+        });
+      }
+
+      // Direct multi-channel notification (Bell In-App + Direct SMS + Web Push)
+      let notificationResult: any = undefined;
+      const shouldDispatchDirect =
+        Boolean(cleanNewExpertMsg) &&
+        (sendInApp === true || sendDirectSms === true || sendPush === true);
+
+      if (shouldDispatchDirect) {
+        const phoneFromFields = submittedData.find(
+          (f: any) =>
+            (f?.type === 'phone' || /موبایل|تلفن|همراه/i.test(String(f?.label || ''))) &&
+            normalizeIranMobile(String(f?.value || ''))
+        );
+        const targetPhone =
+          updated.beneficiary?.phone ||
+          (phoneFromFields ? String(phoneFromFields.value) : null);
+
+        notificationResult = await dispatchBeneficiaryNotification({
+          beneficiaryId: updated.beneficiaryId || updated.beneficiary?.id || null,
+          phone: targetPhone,
+          title: `پیام کارشناس درباره «${updated.form.title}»`,
+          message: cleanNewExpertMsg,
+          type: updated.status === 'NEEDS_INFO' ? 'NEEDS_INFO' : 'EXPERT_MESSAGE',
+          formId: updated.formId,
+          formTitle: updated.form.title,
+          trackingCode: updated.trackingCode,
+          senderName,
+          sendInApp: sendInApp === true,
+          sendSms: sendDirectSms === true,
+          sendPush: sendPush === true,
         });
       }
 
       res.json({
         ...formatCustomFormSubmissionRecord(updated),
         dispatchedSmsCount,
+        notificationResult,
       });
     } catch (error) {
       res.status(500).json({ error: 'خطا در به‌روزرسانی وضعیت پاسخ', details: String(error) });
@@ -3422,19 +3701,81 @@ app.get('/api/beneficiary/auth/me', requireBeneficiaryAuth, async (req: Benefici
   res.json({ beneficiary: req.authBeneficiary });
 });
 
+async function isPublicFormEnabledForBeneficiaryPortal(): Promise<boolean> {
+  const cfg = await prisma.appConfig.findUnique({ where: { id: 1 } });
+  if (!cfg?.publicFormConfig) return false;
+  try {
+    const parsed = JSON.parse(cfg.publicFormConfig);
+    return Boolean(parsed?.showInBeneficiaryPortal);
+  } catch {
+    return false;
+  }
+}
+
+async function findBeneficiaryPublicRequest(beneficiary: { id: string; phone: string }) {
+  const normalizedPhone = normalizeIranMobile(beneficiary.phone);
+  const direct = await prisma.beneficiaryRequest.findFirst({
+    where: { beneficiaryId: beneficiary.id },
+    orderBy: { updatedAt: 'desc' },
+  });
+  if (direct) return direct;
+
+  if (normalizedPhone) {
+    const byPhone = await prisma.beneficiaryRequest.findFirst({
+      where: {
+        OR: [{ phone: beneficiary.phone }, { phone: normalizedPhone }],
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (byPhone) return byPhone;
+  }
+  return null;
+}
+
+function buildBeneficiaryNotificationWhere(beneficiary: { id: string; phone: string }) {
+  const normalizedPhone = normalizeIranMobile(beneficiary.phone);
+  const orConditions: any[] = [{ beneficiaryId: beneficiary.id }];
+  if (beneficiary.phone) orConditions.push({ phone: beneficiary.phone });
+  if (normalizedPhone && normalizedPhone !== beneficiary.phone) {
+    orConditions.push({ phone: normalizedPhone });
+  }
+  return { OR: orConditions };
+}
+
 app.get('/api/beneficiary/portal', requireBeneficiaryAuth, async (req: BeneficiaryRequestContext, res) => {
   try {
     const beneficiary = req.authBeneficiary!;
-    const [forms, submissions] = await Promise.all([
-      prisma.customForm.findMany({
-        where: { isActive: true, showInBeneficiaryPortal: true },
-        orderBy: { createdAt: 'asc' },
-      }),
-      prisma.customFormSubmission.findMany({
-        where: { beneficiaryId: beneficiary.id },
-        orderBy: { updatedAt: 'desc' },
-      }),
-    ]);
+    const notifWhere = buildBeneficiaryNotificationWhere(beneficiary);
+    const normalizedPhone = normalizeIranMobile(beneficiary.phone);
+    const [forms, submissions, publicFormEnabled, notifications, pushSubscribedCount] =
+      await Promise.all([
+        prisma.customForm.findMany({
+          where: { isActive: true, showInBeneficiaryPortal: true },
+          orderBy: { createdAt: 'asc' },
+        }),
+        prisma.customFormSubmission.findMany({
+          where: { beneficiaryId: beneficiary.id },
+          orderBy: { updatedAt: 'desc' },
+        }),
+        isPublicFormEnabledForBeneficiaryPortal(),
+        prisma.beneficiaryNotification.findMany({
+          where: notifWhere,
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+        prisma.pushSubscription.count({
+          where: {
+            OR: [
+              { beneficiaryId: beneficiary.id },
+              ...(normalizedPhone ? [{ beneficiaryPhone: normalizedPhone }] : []),
+            ],
+          },
+        }),
+      ]);
+
+    const publicRequest = publicFormEnabled
+      ? await findBeneficiaryPublicRequest(beneficiary)
+      : null;
 
     const subMap = new Map<string, any>();
     for (const s of submissions) {
@@ -3445,6 +3786,11 @@ app.get('/api/beneficiary/portal', requireBeneficiaryAuth, async (req: Beneficia
 
     res.json({
       beneficiary,
+      publicFormEnabled,
+      publicRequest,
+      notifications,
+      unreadNotificationsCount: notifications.filter((n) => !n.isRead).length,
+      pushSubscribedCount,
       items: forms.map((f) => ({
         form: formatCustomFormRecord(f),
         submission: subMap.get(f.id) || null,
@@ -3454,6 +3800,256 @@ app.get('/api/beneficiary/portal', requireBeneficiaryAuth, async (req: Beneficia
     res.status(500).json({ error: 'خطا در دریافت اطلاعات پروفایل مددجو', details: String(error) });
   }
 });
+
+// Beneficiary In-App Bell Notifications
+app.get('/api/beneficiary/notifications', requireBeneficiaryAuth, async (req: BeneficiaryRequestContext, res) => {
+  try {
+    const beneficiary = req.authBeneficiary!;
+    const notifications = await prisma.beneficiaryNotification.findMany({
+      where: buildBeneficiaryNotificationWhere(beneficiary),
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    res.json({
+      notifications,
+      unreadCount: notifications.filter((n) => !n.isRead).length,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در دریافت اعلانات', details: String(error) });
+  }
+});
+
+app.patch(
+  '/api/beneficiary/notifications/:id/read',
+  requireBeneficiaryAuth,
+  async (req: BeneficiaryRequestContext, res) => {
+    try {
+      const beneficiary = req.authBeneficiary!;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: 'شناسه اعلان نامعتبر است.' });
+
+      await prisma.beneficiaryNotification.updateMany({
+        where: {
+          id,
+          ...buildBeneficiaryNotificationWhere(beneficiary),
+        },
+        data: { isRead: true },
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: 'خطا در به‌روزرسانی وضعیت اعلان', details: String(error) });
+    }
+  }
+);
+
+app.post(
+  '/api/beneficiary/notifications/read-all',
+  requireBeneficiaryAuth,
+  async (req: BeneficiaryRequestContext, res) => {
+    try {
+      const beneficiary = req.authBeneficiary!;
+      await prisma.beneficiaryNotification.updateMany({
+        where: {
+          ...buildBeneficiaryNotificationWhere(beneficiary),
+          isRead: false,
+        },
+        data: { isRead: true },
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: 'خطا در خواندن همه اعلانات', details: String(error) });
+    }
+  }
+);
+
+// Beneficiary Web Push Subscription Routes
+app.get('/api/beneficiary/push/key', requireBeneficiaryAuth, async (_req, res) => {
+  try {
+    const key = await pushService.getPublicKey();
+    res.json({ publicKey: key });
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در دریافت کلید پوش نوتیفیکیشن', details: String(error) });
+  }
+});
+
+app.post('/api/beneficiary/push/subscribe', requireBeneficiaryAuth, async (req: BeneficiaryRequestContext, res) => {
+  try {
+    const beneficiary = req.authBeneficiary!;
+    const { subscription } = req.body || {};
+    if (!subscription || !subscription.endpoint || !subscription.keys) {
+      return res.status(400).json({ error: 'اطلاعات اشتراک پوش نوتیفیکیشن ناقص است.' });
+    }
+
+    const { endpoint, keys } = subscription;
+    const userAgent = req.headers['user-agent'] || '';
+    const normalizedPhone = normalizeIranMobile(beneficiary.phone) || beneficiary.phone;
+
+    const saved = await prisma.pushSubscription.upsert({
+      where: { endpoint },
+      update: {
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+        username: null,
+        beneficiaryId: beneficiary.id,
+        beneficiaryPhone: normalizedPhone,
+        userAgent,
+      },
+      create: {
+        endpoint,
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+        username: null,
+        beneficiaryId: beneficiary.id,
+        beneficiaryPhone: normalizedPhone,
+        userAgent,
+      },
+    });
+
+    res.json({ success: true, id: saved.id });
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در ثبت پوش نوتیفیکیشن', details: String(error) });
+  }
+});
+
+app.post('/api/beneficiary/push/unsubscribe', requireBeneficiaryAuth, async (req: BeneficiaryRequestContext, res) => {
+  try {
+    const beneficiary = req.authBeneficiary!;
+    const { endpoint } = req.body || {};
+    if (endpoint) {
+      await prisma.pushSubscription.deleteMany({
+        where: { endpoint, beneficiaryId: beneficiary.id },
+      });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در لغو پوش نوتیفیکیشن', details: String(error) });
+  }
+});
+
+const handleBeneficiaryPublicRequestUpsert = async (
+  req: BeneficiaryRequestContext,
+  res: express.Response
+) => {
+  try {
+    const beneficiary = req.authBeneficiary!;
+    const enabled = await isPublicFormEnabledForBeneficiaryPortal();
+    if (!enabled) {
+      return res.status(404).json({ error: 'فرم درخواست عمومی در پروفایل مددجو فعال نیست.' });
+    }
+
+    const {
+      name,
+      nid,
+      phone,
+      birthDate,
+      guardian,
+      dependents,
+      housing,
+      cat,
+      requestedAmount,
+      desc,
+      address,
+      customFields,
+    } = req.body || {};
+
+    const cleanName = String(name || '').trim();
+    const cleanNid = String(nid || '').trim();
+    const cleanPhone = String(phone || beneficiary.phone || '').trim();
+    const cleanCat = String(cat || '').trim();
+
+    if (!cleanName || !cleanNid || !cleanPhone || !cleanCat) {
+      return res.status(400).json({ error: 'اطلاعات هویتی (نام، کد ملی، شماره تماس) و نوع درخواست الزامی است.' });
+    }
+
+    let serializedCustomFields = '[]';
+    if (Array.isArray(customFields)) {
+      serializedCustomFields = JSON.stringify(customFields);
+    } else if (typeof customFields === 'string' && customFields.trim()) {
+      serializedCustomFields = customFields;
+    }
+
+    const existing = await findBeneficiaryPublicRequest(beneficiary);
+
+    if (!beneficiary.fullName?.trim() && cleanName) {
+      await prisma.beneficiaryAccount
+        .update({
+          where: { id: beneficiary.id },
+          data: { fullName: cleanName },
+        })
+        .catch(() => undefined);
+    }
+
+    if (existing) {
+      const nextStatus = existing.status === 'NEEDS_INFO' ? 'PENDING' : existing.status;
+      const updated = await prisma.beneficiaryRequest.update({
+        where: { id: existing.id },
+        data: {
+          beneficiaryId: beneficiary.id,
+          name: cleanName,
+          nid: cleanNid,
+          phone: cleanPhone,
+          birthDate: birthDate !== undefined ? String(birthDate) : existing.birthDate,
+          guardian:
+            guardian !== undefined && String(guardian).trim() !== ''
+              ? String(guardian)
+              : existing.guardian,
+          dependents: dependents !== undefined ? parseInt(String(dependents)) || 0 : existing.dependents,
+          housing:
+            housing !== undefined && String(housing).trim() !== ''
+              ? String(housing)
+              : existing.housing,
+          cat: cleanCat,
+          requestedAmount:
+            requestedAmount !== undefined ? parseFloat(String(requestedAmount)) || 0 : existing.requestedAmount,
+          desc: desc !== undefined ? String(desc) : existing.desc,
+          address: address !== undefined ? String(address) : existing.address,
+          customFields: serializedCustomFields,
+          status: nextStatus,
+        },
+      });
+      return res.json(updated);
+    }
+
+    const shamsiYear = new Date().getFullYear() - 621;
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const trackingCode = `REQ-${shamsiYear}-${randomSuffix}`;
+
+    const created = await prisma.beneficiaryRequest.create({
+      data: {
+        trackingCode,
+        beneficiaryId: beneficiary.id,
+        name: cleanName,
+        nid: cleanNid,
+        phone: cleanPhone,
+        birthDate: birthDate || '',
+        guardian: guardian !== undefined && String(guardian).trim() !== '' ? String(guardian) : '-',
+        dependents: parseInt(String(dependents)) || 0,
+        housing: housing !== undefined && String(housing).trim() !== '' ? String(housing) : '-',
+        cat: cleanCat,
+        requestedAmount: parseFloat(String(requestedAmount)) || 0,
+        approvedAmount: 0,
+        desc: desc || '',
+        address: address || '',
+        customFields: serializedCustomFields,
+        status: 'PENDING',
+      },
+    });
+
+    smsService
+      .handleTrigger({
+        eventType: 'REQUEST_CREATED',
+        data: created,
+      })
+      .catch((e) => console.error('Beneficiary public request SMS trigger error:', e));
+
+    res.json(created);
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در ثبت فرم درخواست عمومی مددجو', details: String(error) });
+  }
+};
+
+app.post('/api/beneficiary/public-request', requireBeneficiaryAuth, handleBeneficiaryPublicRequestUpsert);
+app.put('/api/beneficiary/public-request', requireBeneficiaryAuth, handleBeneficiaryPublicRequestUpsert);
 
 app.post(
   '/api/beneficiary/forms/:formId/submit',

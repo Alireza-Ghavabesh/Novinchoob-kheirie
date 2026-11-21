@@ -74,6 +74,7 @@ export interface PublicFormSchema {
   submitButtonText: string;
   successMessage: string;
   showTracking: boolean;
+  showInBeneficiaryPortal?: boolean;
   maxFileSizeMB?: number;
   builtin: BuiltinFieldsConfig;
   guardianOptions: string[];
@@ -183,6 +184,7 @@ export const DEFAULT_PUBLIC_FORM_SCHEMA: PublicFormSchema = {
   submitButtonText: 'ثبت نهایی و دریافت کد رهگیری',
   successMessage: 'درخواست شما با موفقیت در سیستم ثبت گردید',
   showTracking: true,
+  showInBeneficiaryPortal: false,
   builtin: {
     showBirthDate: true,
     showGuardian: true,
@@ -484,6 +486,7 @@ export function parsePublicFormSchema(raw?: string | null): PublicFormSchema {
           ? parsed.successMessage.trim()
           : DEFAULT_PUBLIC_FORM_SCHEMA.successMessage,
       showTracking: parsed?.showTracking !== false,
+      showInBeneficiaryPortal: Boolean(parsed?.showInBeneficiaryPortal),
       maxFileSizeMB:
         typeof parsed?.maxFileSizeMB === 'number' && parsed.maxFileSizeMB > 0
           ? Math.min(25, Math.max(1, Math.round(parsed.maxFileSizeMB)))

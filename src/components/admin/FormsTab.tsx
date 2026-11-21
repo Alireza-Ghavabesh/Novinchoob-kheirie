@@ -24,6 +24,8 @@ import {
   Sparkles,
   ArrowRight,
   Star,
+  Bell,
+  Smartphone,
 } from 'lucide-react';
 import {
   AppConfig,
@@ -76,6 +78,7 @@ export const FormsTab: React.FC<FormsTabProps> = ({
   const [subTab, setSubTab] = useState<'forms' | 'entities'>('forms');
   const [editingPublicForm, setEditingPublicForm] = useState(false);
   const [copiedPublicForm, setCopiedPublicForm] = useState(false);
+  const [togglingPublicPortal, setTogglingPublicPortal] = useState(false);
   const [forms, setForms] = useState<CustomForm[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
@@ -108,6 +111,9 @@ export const FormsTab: React.FC<FormsTabProps> = ({
   const [subNoteInput, setSubNoteInput] = useState('');
   const [subExpertMsgInput, setSubExpertMsgInput] = useState('');
   const [subSendSms, setSubSendSms] = useState(true);
+  const [subSendInApp, setSubSendInApp] = useState(true);
+  const [subSendDirectSms, setSubSendDirectSms] = useState(false);
+  const [subSendPush, setSubSendPush] = useState(true);
   const [subStatusInput, setSubStatusInput] = useState<CustomFormSubmissionStatus>('NEW');
   const [savingSub, setSavingSub] = useState(false);
   const [subFeedback, setSubFeedback] = useState('');
@@ -180,6 +186,32 @@ export const FormsTab: React.FC<FormsTabProps> = ({
     navigator.clipboard.writeText(url);
     setCopiedPublicForm(true);
     setTimeout(() => setCopiedPublicForm(false), 2500);
+  };
+
+  const togglePublicFormInBeneficiaryPortal = async () => {
+    setTogglingPublicPortal(true);
+    setErrorMsg('');
+    try {
+      const currentSchema = parsePublicFormSchema(config?.publicFormConfig);
+      const nextVal = !currentSchema.showInBeneficiaryPortal;
+      const updated = await api.updateConfig({
+        publicFormConfig: JSON.stringify({
+          ...currentSchema,
+          showInBeneficiaryPortal: nextVal,
+        }),
+      });
+      onConfigUpdated(updated);
+      setStatusMsg(
+        nextVal
+          ? 'فرم درخواست عمومی با موفقیت برای نمایش در پروفایل مددجو فعال شد.'
+          : 'نمایش فرم درخواست عمومی در پروفایل مددجو غیرفعال شد.'
+      );
+      setTimeout(() => setStatusMsg(''), 3500);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'خطا در تغییر وضعیت نمایش فرم عمومی در پروفایل مددجو');
+    } finally {
+      setTogglingPublicPortal(false);
+    }
   };
 
   const openEditForm = (f: CustomForm) => {
@@ -282,6 +314,9 @@ export const FormsTab: React.FC<FormsTabProps> = ({
     setSubNoteInput(sub.note || '');
     setSubExpertMsgInput(sub.expertMessage || '');
     setSubSendSms(true);
+    setSubSendInApp(true);
+    setSubSendDirectSms(false);
+    setSubSendPush(true);
     setSubFeedback('');
   };
 
@@ -290,19 +325,43 @@ export const FormsTab: React.FC<FormsTabProps> = ({
     setSavingSub(true);
     setSubFeedback('');
     try {
+      const hasMsg = Boolean(subExpertMsgInput.trim());
       const updated = await api.updateFormSubmission(selectedSub.id, {
         status: subStatusInput,
         note: subNoteInput,
         expertMessage: subExpertMsgInput,
         sendSms: subSendSms,
+        sendInApp: hasMsg ? subSendInApp : false,
+        sendDirectSms: hasMsg ? subSendDirectSms : false,
+        sendPush: hasMsg ? subSendPush : false,
       });
       setSubmissions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
       setSelectedSub(updated);
-      const smsNote =
-        updated.dispatchedSmsCount && updated.dispatchedSmsCount > 0
-          ? ` (به ${toPersianDigits(updated.dispatchedSmsCount)} شماره پیامک ارسال شد)`
-          : '';
-      setSubFeedback(`وضعیت و پیغام کارشناس با موفقیت ذخیره شد${smsNote}.`);
+
+      const parts: string[] = ['وضعیت و پیغام کارشناس ذخیره شد'];
+      if (updated.notificationResult?.inApp?.created) {
+        parts.push('در زنگوله پروفایل مددجو ثبت شد');
+      }
+      if (updated.notificationResult?.sms?.attempted) {
+        if (updated.notificationResult.sms.sent) {
+          parts.push('پیامک مستقیم ارسال شد');
+        } else if (updated.notificationResult.sms.error) {
+          parts.push(`پیامک ارسال نشد (${updated.notificationResult.sms.error})`);
+        }
+      }
+      if (updated.notificationResult?.push?.attempted) {
+        if (updated.notificationResult.push.sentCount > 0) {
+          parts.push(
+            `پوش نوتیفیکیشن به ${toPersianDigits(updated.notificationResult.push.sentCount)} دستگاه ارسال شد`
+          );
+        } else if (updated.notificationResult.push.error) {
+          parts.push(`پوش: ${updated.notificationResult.push.error}`);
+        }
+      }
+      if (updated.dispatchedSmsCount && updated.dispatchedSmsCount > 0) {
+        parts.push(`قوانین پیامک: ${toPersianDigits(updated.dispatchedSmsCount)} ارسال`);
+      }
+      setSubFeedback(parts.join(' • '));
     } catch (err: any) {
       setErrorMsg(err.message || 'خطا در ثبت وضعیت');
     } finally {
@@ -516,6 +575,12 @@ export const FormsTab: React.FC<FormsTabProps> = ({
                       <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
                         فعال • متصل به کارتابل متقاضیان
                       </span>
+                      {publicSchema.showInBeneficiaryPortal && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-100 text-teal-800 text-[10px] font-bold">
+                          <UserCheck className="w-3 h-3" />
+                          فعال در پروفایل مددجو
+                        </span>
+                      )}
                     </div>
                     <h4 className="font-extrabold text-base sm:text-lg text-slate-900">
                       {publicSchema.title}
@@ -526,6 +591,25 @@ export const FormsTab: React.FC<FormsTabProps> = ({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={togglingPublicPortal}
+                      onClick={togglePublicFormInBeneficiaryPortal}
+                      className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-xl border transition cursor-pointer disabled:opacity-50 ${
+                        publicSchema.showInBeneficiaryPortal
+                          ? 'bg-teal-600 hover:bg-teal-700 text-white border-teal-700 shadow-sm'
+                          : 'bg-teal-50 hover:bg-teal-100 text-teal-900 border-teal-300'
+                      }`}
+                    >
+                      <UserCheck className="w-4 h-4" />
+                      <span>
+                        {togglingPublicPortal
+                          ? 'در حال ذخیره...'
+                          : publicSchema.showInBeneficiaryPortal
+                          ? 'فعال در پروفایل مددجو (غیرفعال‌سازی)'
+                          : 'فعال‌سازی در پروفایل مددجو'}
+                      </span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => setEditingPublicForm(true)}
@@ -1274,10 +1358,11 @@ export const FormsTab: React.FC<FormsTabProps> = ({
                           </div>
                         </div>
 
-                        <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1.5">
+                        <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 space-y-2.5">
                           <div className="flex items-center justify-between gap-2">
-                            <label className="font-bold text-amber-950">
-                              پیغام کارشناس برای نمایش در پروفایل مددجو:
+                            <label className="font-bold text-amber-950 flex items-center gap-1.5">
+                              <Bell className="w-3.5 h-3.5 text-amber-600" />
+                              <span>پیغام کارشناس برای مددجو (نقص مدارک / اطلاع‌رسانی):</span>
                             </label>
                             {selectedSub.expertMessageAt && (
                               <span className="text-[10px] text-amber-800">
@@ -1292,6 +1377,42 @@ export const FormsTab: React.FC<FormsTabProps> = ({
                             placeholder="مثال: مدارک شما ناقص است و نیاز به بارگذاری تصویر شناسنامه دارید..."
                             className="w-full px-3 py-2 rounded-xl border border-amber-300 bg-white outline-none focus:ring-2 focus:ring-amber-500"
                           />
+
+                          {/* Multi-channel delivery toggles */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                            <label className="flex items-center gap-1.5 cursor-pointer bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-800">
+                              <input
+                                type="checkbox"
+                                checked={subSendInApp}
+                                onChange={(e) => setSubSendInApp(e.target.checked)}
+                                className="rounded text-emerald-600"
+                              />
+                              <Bell className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              <span>زنگوله پروفایل</span>
+                            </label>
+
+                            <label className="flex items-center gap-1.5 cursor-pointer bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-800">
+                              <input
+                                type="checkbox"
+                                checked={subSendDirectSms}
+                                onChange={(e) => setSubSendDirectSms(e.target.checked)}
+                                className="rounded text-emerald-600"
+                              />
+                              <MessageSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span>ارسال پیامک همین متن</span>
+                            </label>
+
+                            <label className="flex items-center gap-1.5 cursor-pointer bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-800">
+                              <input
+                                type="checkbox"
+                                checked={subSendPush}
+                                onChange={(e) => setSubSendPush(e.target.checked)}
+                                className="rounded text-emerald-600"
+                              />
+                              <Smartphone className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                              <span>پوش نوتیفیکیشن</span>
+                            </label>
+                          </div>
                         </div>
 
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1302,7 +1423,7 @@ export const FormsTab: React.FC<FormsTabProps> = ({
                               onChange={(e) => setSubSendSms(e.target.checked)}
                               className="rounded text-emerald-600"
                             />
-                            <span>اجرای قوانین پیامک متصل به رویداد (پیغام کارشناس / تغییر وضعیت)</span>
+                            <span>اجرای قوانین پیامک متصل به رویداد (در صورت تعریف)</span>
                           </label>
 
                           <button
@@ -1318,7 +1439,7 @@ export const FormsTab: React.FC<FormsTabProps> = ({
                             ) : (
                               <Clock className="w-3.5 h-3.5 text-amber-400" />
                             )}
-                            <span>{savingSub ? 'در حال ثبت...' : 'ذخیره وضعیت و پیغام کارشناس'}</span>
+                            <span>{savingSub ? 'در حال ثبت و ارسال...' : 'ذخیره وضعیت و ارسال پیام'}</span>
                           </button>
                         </div>
                       </div>

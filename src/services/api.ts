@@ -1,6 +1,8 @@
 import {
   AppConfig,
   BeneficiaryAccount,
+  BeneficiaryNotification,
+  BeneficiaryNotifyResult,
   BeneficiaryPortalFormItem,
   BeneficiaryRequest,
   Category,
@@ -607,6 +609,9 @@ export const api = {
       note?: string | null;
       expertMessage?: string | null;
       sendSms?: boolean;
+      sendInApp?: boolean;
+      sendDirectSms?: boolean;
+      sendPush?: boolean;
     }
   ): Promise<CustomFormSubmission> => {
     const res = await authFetch(`/api/forms/submissions/${submissionId}`, {
@@ -615,6 +620,28 @@ export const api = {
       body: JSON.stringify(data),
     });
     return parseJsonOrThrow<CustomFormSubmission>(res, 'خطا در به‌روزرسانی پاسخ');
+  },
+  sendBeneficiaryNotification: async (data: {
+    requestId?: number;
+    beneficiaryId?: string | null;
+    phone?: string | null;
+    title?: string;
+    message: string;
+    formId?: string | null;
+    formTitle?: string | null;
+    trackingCode?: string | null;
+    sendInApp?: boolean;
+    sendSms?: boolean;
+    sendPush?: boolean;
+    alsoSaveNote?: boolean;
+    nextRequestStatus?: string;
+  }): Promise<{ success: boolean; result: BeneficiaryNotifyResult }> => {
+    const res = await authFetch('/api/admin/beneficiary-notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return parseJsonOrThrow(res, 'خطا در ارسال پیام به مددجو');
   },
   deleteFormSubmission: async (submissionId: number): Promise<void> => {
     const res = await authFetch(`/api/forms/submissions/${submissionId}`, { method: 'DELETE' });
@@ -682,9 +709,68 @@ export const api = {
   getBeneficiaryPortal: async (): Promise<{
     beneficiary: BeneficiaryAccount;
     items: BeneficiaryPortalFormItem[];
+    publicFormEnabled?: boolean;
+    publicRequest?: BeneficiaryRequest | null;
+    notifications?: BeneficiaryNotification[];
+    unreadNotificationsCount?: number;
+    pushSubscribedCount?: number;
   }> => {
     const res = await beneficiaryAuthFetch('/api/beneficiary/portal');
     return parseJsonOrThrow(res, 'خطا در دریافت اطلاعات پروفایل مددجو');
+  },
+  getBeneficiaryNotifications: async (): Promise<{
+    notifications: BeneficiaryNotification[];
+    unreadCount: number;
+  }> => {
+    const res = await beneficiaryAuthFetch('/api/beneficiary/notifications');
+    return parseJsonOrThrow(res, 'خطا در دریافت اعلانات مددجو');
+  },
+  markBeneficiaryNotificationRead: async (id: number): Promise<void> => {
+    const res = await beneficiaryAuthFetch(`/api/beneficiary/notifications/${id}/read`, {
+      method: 'PATCH',
+    });
+    await parseJsonOrThrow(res, 'خطا در خواندن اعلان');
+  },
+  markAllBeneficiaryNotificationsRead: async (): Promise<void> => {
+    const res = await beneficiaryAuthFetch('/api/beneficiary/notifications/read-all', {
+      method: 'POST',
+    });
+    await parseJsonOrThrow(res, 'خطا در خواندن همه اعلانات');
+  },
+  getBeneficiaryPushKey: async (): Promise<string> => {
+    const res = await beneficiaryAuthFetch('/api/beneficiary/push/key');
+    const data = await parseJsonOrThrow<{ publicKey: string }>(
+      res,
+      'خطا در دریافت کلید پوش نوتیفیکیشن'
+    );
+    return data.publicKey || '';
+  },
+  subscribeBeneficiaryPush: async (subscription: PushSubscriptionJSON): Promise<void> => {
+    const res = await beneficiaryAuthFetch('/api/beneficiary/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription }),
+    });
+    await parseJsonOrThrow(res, 'خطا در فعال‌سازی پوش نوتیفیکیشن');
+  },
+  unsubscribeBeneficiaryPush: async (endpoint: string): Promise<void> => {
+    const res = await beneficiaryAuthFetch('/api/beneficiary/push/unsubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint }),
+    });
+    await parseJsonOrThrow(res, 'خطا در غیرفعال‌سازی پوش نوتیفیکیشن');
+  },
+  submitBeneficiaryPublicRequest: async (
+    data: any,
+    isEdit = false
+  ): Promise<BeneficiaryRequest> => {
+    const res = await beneficiaryAuthFetch('/api/beneficiary/public-request', {
+      method: isEdit ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return parseJsonOrThrow(res, 'خطا در ثبت فرم درخواست عمومی');
   },
   submitBeneficiaryForm: async (
     formId: string,

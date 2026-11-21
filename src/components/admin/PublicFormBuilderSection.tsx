@@ -12,6 +12,7 @@ import {
   EyeOff,
   Sliders,
   ListChecks,
+  UserCheck,
 } from 'lucide-react';
 import { AppConfig } from '../../types';
 import { api } from '../../services/api';
@@ -214,6 +215,34 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
           <span>{errorMsg}</span>
         </div>
       )}
+
+      {/* 0. Beneficiary Portal Visibility Toggle */}
+      <label className="flex items-start sm:items-center justify-between gap-3 p-4 rounded-2xl bg-teal-50 border-2 border-teal-200 cursor-pointer hover:bg-teal-100/60 transition">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-teal-600 text-white flex items-center justify-center shrink-0 mt-0.5">
+            <UserCheck className="w-5 h-5" />
+          </div>
+          <div className="space-y-0.5">
+            <span className="block font-extrabold text-xs sm:text-sm text-teal-950">
+              نمایش و تکمیل/ویرایش فرم درخواست عمومی در پروفایل مددجو
+            </span>
+            <span className="block text-[11px] text-teal-800 leading-relaxed">
+              با فعال کردن این گزینه، مددجویانی که با شماره موبایل وارد پروفایل خود می‌شوند می‌توانند همین فرم درخواست عمومی را مستقیماً تکمیل، ویرایش و پیگیری کنند و پرونده آن‌ها وارد کارتابل اصلی متقاضیان می‌شود.
+            </span>
+          </div>
+        </div>
+        <input
+          type="checkbox"
+          checked={Boolean(schema.showInBeneficiaryPortal)}
+          onChange={(e) =>
+            setSchema((prev) => ({
+              ...prev,
+              showInBeneficiaryPortal: e.target.checked,
+            }))
+          }
+          className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500 shrink-0 mt-1 sm:mt-0"
+        />
+      </label>
 
       {/* 1. Select Box Options Managers (Guardian & Housing) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

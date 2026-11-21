@@ -176,13 +176,15 @@ model PushConfig {
 }
 
 model PushSubscription {
-  id        Int      @id @default(autoincrement())
-  endpoint  String   @unique
-  p256dh    String
-  auth      String
-  username  String?  // username who subscribed (e.g. admin or staff)
-  userAgent String?
-  createdAt DateTime @default(now())
+  id               Int      @id @default(autoincrement())
+  endpoint         String   @unique
+  p256dh           String
+  auth             String
+  username         String?  // username who subscribed (e.g. admin or staff)
+  beneficiaryId    String?  // BeneficiaryAccount.id for beneficiary push alerts
+  beneficiaryPhone String?  // normalized phone for beneficiary push alerts
+  userAgent        String?
+  createdAt        DateTime @default(now())
 }
 
 model OtpCode {
@@ -257,5 +259,26 @@ model BeneficiaryAccount {
   createdAt   DateTime               @default(now())
   updatedAt   DateTime               @updatedAt
 }
+
+model BeneficiaryNotification {
+  id            Int      @id @default(autoincrement())
+  beneficiaryId String?
+  phone         String?
+  title         String
+  message       String
+  type          String   @default("EXPERT_MESSAGE")
+  formId        String?
+  formTitle     String?
+  trackingCode  String?
+  senderName    String?
+  isRead        Boolean  @default(false)
+  sentSms       Boolean  @default(false)
+  sentPush      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([beneficiaryId])
+  @@index([phone])
+}
+
 
 

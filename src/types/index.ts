@@ -48,6 +48,7 @@ export interface BeneficiaryRequest {
   approvedDate?: string | null;
   approvedBy?: string | null;
   customFields?: string | null;
+  beneficiaryId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -249,8 +250,32 @@ export interface CustomFormSubmission {
   expertMessageAt?: string | null;
   expertMessageBy?: string | null;
   dispatchedSmsCount?: number;
+  notificationResult?: BeneficiaryNotifyResult;
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface BeneficiaryNotification {
+  id: number;
+  beneficiaryId?: string | null;
+  phone?: string | null;
+  title: string;
+  message: string;
+  type: string;
+  formId?: string | null;
+  formTitle?: string | null;
+  trackingCode?: string | null;
+  senderName?: string | null;
+  isRead: boolean;
+  sentSms: boolean;
+  sentPush: boolean;
+  createdAt: string;
+}
+
+export interface BeneficiaryNotifyResult {
+  inApp: { attempted: boolean; created: boolean; notificationId?: number };
+  sms: { attempted: boolean; sent: boolean; receptor?: string; error?: string };
+  push: { attempted: boolean; sentCount: number; failedCount: number; error?: string };
 }
 
 export interface BeneficiaryPortalFormItem {

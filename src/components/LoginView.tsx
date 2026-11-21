@@ -322,6 +322,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   <input
                     type="text"
                     required
+                    autoFocus
                     autoComplete="username"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
@@ -339,6 +340,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   </label>
                   <button
                     type="button"
+                    tabIndex={-1}
                     onClick={() => {
                       setShowForgotModal(true);
                       setForgotSubmitted(false);

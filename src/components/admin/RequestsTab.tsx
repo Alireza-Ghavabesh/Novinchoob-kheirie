@@ -42,6 +42,10 @@ import {
   CreditCard,
   Building,
   ExternalLink,
+  Bell,
+  MessageSquare,
+  Smartphone,
+  Send,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -80,6 +84,22 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
   // Needs Info Modal State
   const [needsInfoReq, setNeedsInfoReq] = useState<BeneficiaryRequest | null>(null);
   const [needsInfoNote, setNeedsInfoNote] = useState('');
+  const [needsInfoSendInApp, setNeedsInfoSendInApp] = useState(true);
+  const [needsInfoSendSms, setNeedsInfoSendSms] = useState(true);
+  const [needsInfoSendPush, setNeedsInfoSendPush] = useState(true);
+  const [needsInfoSubmitting, setNeedsInfoSubmitting] = useState(false);
+
+  // Direct Notify Modal State (Bell + SMS + Push)
+  const [notifyReq, setNotifyReq] = useState<BeneficiaryRequest | null>(null);
+  const [notifyTitle, setNotifyTitle] = useState('');
+  const [notifyMessage, setNotifyMessage] = useState('');
+  const [notifySendInApp, setNotifySendInApp] = useState(true);
+  const [notifySendSms, setNotifySendSms] = useState(true);
+  const [notifySendPush, setNotifySendPush] = useState(true);
+  const [notifyAlsoSaveNote, setNotifyAlsoSaveNote] = useState(true);
+  const [notifySubmitting, setNotifySubmitting] = useState(false);
+  const [notifyResultMsg, setNotifyResultMsg] = useState('');
+  const [notifyErrorMsg, setNotifyErrorMsg] = useState('');
 
   // Details & Printable Voucher Modal
   const [viewDetailsReq, setViewDetailsReq] = useState<BeneficiaryRequest | null>(null);
@@ -171,17 +191,106 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
     }
   };
 
+  const openNotifyModal = (req: BeneficiaryRequest) => {
+    setNotifyReq(req);
+    setNotifyTitle(`پیام کارشناس درباره پرونده ${req.trackingCode}`);
+    setNotifyMessage(req.note || '');
+    setNotifySendInApp(true);
+    setNotifySendSms(true);
+    setNotifySendPush(true);
+    setNotifyAlsoSaveNote(true);
+    setNotifyResultMsg('');
+    setNotifyErrorMsg('');
+  };
+
+  const handleSendDirectNotification = async () => {
+    if (!notifyReq) return;
+    if (!notifyMessage.trim()) {
+      setNotifyErrorMsg('لطفاً متن پیام برای مددجو را وارد کنید.');
+      return;
+    }
+    if (!notifySendInApp && !notifySendSms && !notifySendPush) {
+      setNotifyErrorMsg('حداقل یکی از کانال‌های ارسال (زنگوله پروفایل، پیامک یا پوش نوتیفیکیشن) را انتخاب کنید.');
+      return;
+    }
+    setNotifySubmitting(true);
+    setNotifyErrorMsg('');
+    setNotifyResultMsg('');
+    try {
+      const { result } = await api.sendBeneficiaryNotification({
+        requestId: notifyReq.id,
+        beneficiaryId: notifyReq.beneficiaryId || null,
+        phone: notifyReq.phone,
+        title: notifyTitle.trim() || `پیام کارشناس درباره پرونده ${notifyReq.trackingCode}`,
+        message: notifyMessage.trim(),
+        formId: 'PUBLIC_REQUEST',
+        formTitle: formSchema.title,
+        trackingCode: notifyReq.trackingCode,
+        sendInApp: notifySendInApp,
+        sendSms: notifySendSms,
+        sendPush: notifySendPush,
+        alsoSaveNote: notifyAlsoSaveNote,
+      });
+
+      const parts: string[] = [];
+      if (result.inApp.created) parts.push('در زنگوله پروفایل مددجو ثبت شد');
+      if (result.sms.attempted) {
+        parts.push(
+          result.sms.sent
+            ? `پیامک به ${result.sms.receptor || notifyReq.phone} ارسال شد`
+            : `پیامک ارسال نشد (${result.sms.error || 'خطا'})`
+        );
+      }
+      if (result.push.attempted) {
+        parts.push(
+          result.push.sentCount > 0
+            ? `پوش نوتیفیکیشن به ${toPersianDigits(result.push.sentCount)} دستگاه ارسال شد`
+            : `پوش: ${result.push.error || 'دستگاه فعالی یافت نشد'}`
+        );
+      }
+      setNotifyResultMsg(parts.join(' • '));
+      if (notifyAlsoSaveNote) onRefresh();
+    } catch (err: any) {
+      setNotifyErrorMsg(err.message || 'خطا در ارسال پیام به مددجو');
+    } finally {
+      setNotifySubmitting(false);
+    }
+  };
+
   const handleConfirmNeedsInfo = async () => {
     if (!needsInfoReq) return;
+    const msg = needsInfoNote.trim() || 'نیازمند ارائه مدارک تکمیلی و فاکتورها';
+    setNeedsInfoSubmitting(true);
     try {
       await api.updateRequest(needsInfoReq.id, {
         status: 'NEEDS_INFO',
-        note: needsInfoNote || 'نیازمند ارائه مدارک تکمیلی و فاکتورها',
+        note: msg,
       });
+
+      if (needsInfoSendInApp || needsInfoSendSms || needsInfoSendPush) {
+        await api
+          .sendBeneficiaryNotification({
+            requestId: needsInfoReq.id,
+            beneficiaryId: needsInfoReq.beneficiaryId || null,
+            phone: needsInfoReq.phone,
+            title: `درخواست تکمیل مدارک (${needsInfoReq.trackingCode})`,
+            message: msg,
+            formId: 'PUBLIC_REQUEST',
+            formTitle: formSchema.title,
+            trackingCode: needsInfoReq.trackingCode,
+            sendInApp: needsInfoSendInApp,
+            sendSms: needsInfoSendSms,
+            sendPush: needsInfoSendPush,
+          })
+          .catch(() => undefined);
+      }
+
       setNeedsInfoReq(null);
       onRefresh();
     } catch {
       alert('خطا در ثبت نقص مدارک');
+    } finally {
+      setNeedsInfoSubmitting(false);
     }
   };
 
@@ -555,6 +664,15 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                           <Eye className="w-4 h-4" />
                         </button>
 
+                        {/* Send Message / Notification (Bell + SMS + Push) */}
+                        <button
+                          onClick={() => openNotifyModal(req)}
+                          title="ارسال پیام و اعلان به مددجو (زنگوله / پیامک / پوش)"
+                          className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition"
+                        >
+                          <Bell className="w-4 h-4" />
+                        </button>
+
                         {/* Approval (Requires permission) */}
                         {canDecide && req.status !== 'APPROVED' && (
                           <button
@@ -716,7 +834,7 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                توضیحات مدارک یا استعلام مورد نیاز (در سامانه پیگیری به متقاضی نمایش داده می‌شود):
+                توضیحات مدارک یا استعلام مورد نیاز (به متقاضی نمایش و ارسال می‌شود):
               </label>
               <textarea
                 rows={3}
@@ -725,6 +843,40 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                 placeholder="مثال: لطفاً تصویر اجاره‌نامه دارای کد رهگیری و فیش حقوقی یا استشهاد محلی را ارائه فرمایید..."
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-blue-500 outline-none"
               />
+            </div>
+
+            <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-200 space-y-2 text-[11px]">
+              <span className="font-bold text-blue-950 block">کانال‌های اطلاع‌رسانی این پیام به مددجو:</span>
+              <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-medium">
+                <input
+                  type="checkbox"
+                  checked={needsInfoSendInApp}
+                  onChange={(e) => setNeedsInfoSendInApp(e.target.checked)}
+                  className="rounded text-blue-600"
+                />
+                <Bell className="w-3.5 h-3.5 text-amber-600" />
+                <span>ثبت در زنگوله اعلانات پروفایل مددجو</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-medium">
+                <input
+                  type="checkbox"
+                  checked={needsInfoSendSms}
+                  onChange={(e) => setNeedsInfoSendSms(e.target.checked)}
+                  className="rounded text-blue-600"
+                />
+                <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                <span>ارسال همین متن به صورت پیامک (SMS)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-medium">
+                <input
+                  type="checkbox"
+                  checked={needsInfoSendPush}
+                  onChange={(e) => setNeedsInfoSendPush(e.target.checked)}
+                  className="rounded text-blue-600"
+                />
+                <Smartphone className="w-3.5 h-3.5 text-indigo-600" />
+                <span>ارسال پوش نوتیفیکیشن به گوشی/مرورگر مددجو</span>
+              </label>
             </div>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
@@ -737,10 +889,157 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
               </button>
               <button
                 type="button"
+                disabled={needsInfoSubmitting}
                 onClick={handleConfirmNeedsInfo}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow transition"
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow transition disabled:opacity-50"
               >
-                ثبت وضعیت نقص مدارک
+                {needsInfoSubmitting ? 'در حال ثبت و ارسال...' : 'ثبت وضعیت نقص مدارک و ارسال پیام'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Direct Beneficiary Message & Notification Modal */}
+      {notifyReq && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+            <div className="flex items-center gap-2.5 text-amber-900 border-b border-slate-100 pb-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <Bell className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-sm sm:text-base text-slate-900">
+                  ارسال پیام و اعلان به مددجو
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {notifyReq.name} • کد پرونده: <span className="font-mono">{notifyReq.trackingCode}</span> •{' '}
+                  <span className="font-mono dir-ltr">{notifyReq.phone}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="flex flex-wrap gap-1.5 text-[11px]">
+              {[
+                'مدارک پرونده شما ناقص است؛ لطفاً وارد پروفایل خود شده و مدارک مورد نیاز را تکمیل فرمایید.',
+                'درخواست شما توسط کارشناس بررسی شد و در نوبت کمیسیون مددکاری قرار گرفت.',
+                'لطفاً جهت تکمیل اطلاعات پرونده با واحد مددکاری مؤسسه تماس بگیرید.',
+              ].map((preset, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setNotifyMessage(preset)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-amber-50 hover:text-amber-900 text-slate-700 border border-slate-200 transition cursor-pointer"
+                >
+                  {i === 0 ? 'الگو: نقص مدارک' : i === 1 ? 'الگو: در نوبت کمیسیون' : 'الگو: درخواست تماس'}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">عنوان اعلان</label>
+                <input
+                  type="text"
+                  value={notifyTitle}
+                  onChange={(e) => setNotifyTitle(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  متن پیام به مددجو <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={notifyMessage}
+                  onChange={(e) => setNotifyMessage(e.target.value)}
+                  placeholder="متن پیام برای نمایش در زنگوله، ارسال پیامک یا پوش نوتیفیکیشن را بنویسید..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-2">
+                <span className="font-bold text-amber-950 block">نحوه ارسال این پیام:</span>
+
+                <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={notifySendInApp}
+                    onChange={(e) => setNotifySendInApp(e.target.checked)}
+                    className="rounded text-amber-600"
+                  />
+                  <Bell className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>ثبت به عنوان اعلان در زنگوله پروفایل مددجو</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={notifySendSms}
+                    onChange={(e) => setNotifySendSms(e.target.checked)}
+                    className="rounded text-emerald-600"
+                  />
+                  <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>ارسال همین متن به صورت پیامک (SMS) به شماره {notifyReq.phone}</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={notifySendPush}
+                    onChange={(e) => setNotifySendPush(e.target.checked)}
+                    className="rounded text-indigo-600"
+                  />
+                  <Smartphone className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>ارسال پوش نوتیفیکیشن به گوشی/مرورگر مددجو</span>
+                </label>
+
+                <div className="pt-2 mt-1 border-t border-amber-200/70">
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-600 text-[11px]">
+                    <input
+                      type="checkbox"
+                      checked={notifyAlsoSaveNote}
+                      onChange={(e) => setNotifyAlsoSaveNote(e.target.checked)}
+                      className="rounded text-slate-600"
+                    />
+                    <span>این متن در یادداشت پرونده نیز ذخیره شود</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {notifyErrorMsg && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+                {notifyErrorMsg}
+              </div>
+            )}
+
+            {notifyResultMsg && (
+              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-start gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <span>{notifyResultMsg}</span>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setNotifyReq(null)}
+                className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                بستن
+              </button>
+              <button
+                type="button"
+                disabled={notifySubmitting}
+                onClick={handleSendDirectNotification}
+                className="inline-flex items-center gap-1.5 px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold rounded-xl shadow transition cursor-pointer disabled:opacity-50"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>{notifySubmitting ? 'در حال ارسال...' : 'ارسال پیام به مددجو'}</span>
               </button>
             </div>
           </div>
@@ -945,22 +1244,36 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
             </div>
 
             {/* Buttons */}
-            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 no-print">
+            <div className="flex flex-wrap justify-between items-center gap-3 pt-4 border-t border-slate-100 no-print">
               <button
                 type="button"
-                onClick={() => setViewDetailsReq(null)}
-                className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl"
+                onClick={() => {
+                  const target = viewDetailsReq;
+                  setViewDetailsReq(null);
+                  openNotifyModal(target);
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-950 text-xs font-bold rounded-xl transition cursor-pointer"
               >
-                بستن
+                <Bell className="w-4 h-4 text-amber-700" />
+                <span>ارسال پیام / اعلان به مددجو</span>
               </button>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="flex items-center gap-2 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow"
-              >
-                <Printer className="w-4 h-4" />
-                <span>چاپ حواله رسمی</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setViewDetailsReq(null)}
+                  className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  بستن
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="flex items-center gap-2 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>چاپ حواله رسمی</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
