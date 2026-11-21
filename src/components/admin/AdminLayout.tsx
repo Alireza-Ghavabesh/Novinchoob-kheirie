@@ -47,6 +47,7 @@ interface AdminLayoutProps {
   onRefreshCategories: () => void;
   onRefreshEntities: () => void;
   onConfigUpdated: (config: AppConfig) => void;
+  onCurrentUserUpdated?: (user: StaffUser) => void;
 }
 
 export type AdminTab = 'inbox' | 'programs' | 'calendar' | 'finance' | 'users' | 'sms' | 'forms' | 'settings';
@@ -64,6 +65,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   onRefreshCategories,
   onRefreshEntities,
   onConfigUpdated,
+  onCurrentUserUpdated,
 }) => {
   const isAdmin = currentUser.username === 'admin';
   const canInbox = isAdmin || Boolean(currentUser.perms?.viewInbox);
@@ -345,7 +347,14 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {activeTab === 'users' && canUsers && <UsersTab currentUser={currentUser} />}
 
-        {activeTab === 'sms' && canSettings && <SmsTab currentUser={currentUser} />}
+        {activeTab === 'sms' && canSettings && (
+          <SmsTab
+            currentUser={currentUser}
+            appConfig={config}
+            onConfigUpdated={onConfigUpdated}
+            onCurrentUserUpdated={onCurrentUserUpdated}
+          />
+        )}
 
         {activeTab === 'forms' && canSettings && (
           <FormsTab
@@ -356,13 +365,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {activeTab === 'settings' && canSettings && (
           <SettingsTab
+            currentUser={currentUser}
             config={config}
             needCategories={needCategories}
             programCategories={programCategories}
             entities={entities}
             onConfigUpdated={onConfigUpdated}
+            onCurrentUserUpdated={onCurrentUserUpdated}
             onRefreshCategories={onRefreshCategories}
             onOpenFormBuilder={() => setActiveTab('forms')}
+            onOpenSmsTab={() => setActiveTab('sms')}
           />
         )}
       </div>

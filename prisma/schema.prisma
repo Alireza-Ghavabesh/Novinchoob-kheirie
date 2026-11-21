@@ -25,6 +25,7 @@ model AppConfig {
   loginAllowPassword Boolean  @default(true)
   loginAllowOtp      Boolean  @default(true)
   loginShowBackLink  Boolean  @default(true)
+  appDomain          String   @default("")
   publicFormConfig   String   @default("")
   updatedAt          DateTime @updatedAt
 }
@@ -124,6 +125,7 @@ model SmsConfig {
   senderLine       String   @default("")
   provider         String   @default("GHASEDAK") // GHASEDAK, CUSTOM
   loginOtpTemplate String   @default("")
+  loginOtpMessage  String   @default("")
   isEnabled        Boolean  @default(true)
   updatedAt        DateTime @updatedAt
 }

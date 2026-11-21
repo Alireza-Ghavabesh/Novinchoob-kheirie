@@ -16,6 +16,7 @@ export interface AppConfig {
   loginAllowPassword?: boolean;
   loginAllowOtp?: boolean;
   loginShowBackLink?: boolean;
+  appDomain?: string;
   publicFormConfig?: string;
 }
 
@@ -94,6 +95,7 @@ export interface SmsConfig {
   senderLine: string;
   provider: 'GHASEDAK' | 'CUSTOM';
   loginOtpTemplate?: string;
+  loginOtpMessage?: string;
   isEnabled: boolean;
   updatedAt?: string;
 }

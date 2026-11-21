@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   UserCheck,
-  User,
   Smartphone,
   MessageSquareCode,
   LogIn,
@@ -15,6 +14,7 @@ import {
 import { AppConfig, BeneficiaryAccount } from '../types';
 import { api } from '../services/api';
 import { toEnglishDigits, toPersianDigits } from '../utils/persian';
+import { useWebOtp } from '../utils/useWebOtp';
 
 interface BeneficiaryLoginViewProps {
   config: AppConfig | null;
@@ -27,8 +27,6 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
   onLoginSuccess,
   onBackToPublic,
 }) => {
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
 
   const [otpSent, setOtpSent] = useState(false);
@@ -61,14 +59,8 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
     setInfoMsg('');
     setSimulatedCode('');
 
-    const fn = firstName.trim();
-    const ln = lastName.trim();
     const ph = toEnglishDigits(phone.trim());
 
-    if (!fn || !ln) {
-      setError('لطفاً نام و نام خانوادگی خود را به‌طور کامل وارد نمایید.');
-      return;
-    }
     if (!ph || ph.length < 10) {
       setError('لطفاً شماره همراه معتبر (مانند 09123456789) وارد نمایید.');
       return;
@@ -77,8 +69,6 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
     setLoading(true);
     try {
       const res = await api.sendBeneficiaryOtp({
-        firstName: fn,
-        lastName: ln,
         phone: ph,
       });
       setOtpSent(true);
@@ -100,10 +90,9 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
     }
   };
 
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const verifyOtpCode = async (rawCode: string) => {
     setError('');
-    const code = toEnglishDigits(otpCode.trim());
+    const code = toEnglishDigits(rawCode.trim());
     if (!code || code.length < 4) {
       setError('لطفاً کد تایید پیامک‌شده را وارد نمایید.');
       return;
@@ -112,8 +101,6 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
     setLoading(true);
     try {
       const res = await api.verifyBeneficiaryOtp({
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
         phone: toEnglishDigits(phone.trim()),
         code,
       });
@@ -124,6 +111,21 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
       setLoading(false);
     }
   };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await verifyOtpCode(otpCode);
+  };
+
+  const webOtpSupported = useWebOtp({
+    active: otpSent && !loading,
+    onCodeReceived: (autoCode) => {
+      const clean = toEnglishDigits(autoCode);
+      setOtpCode(clean);
+      setInfoMsg('کد تایید به صورت خودکار از پیامک خوانده شد. در حال ورود...');
+      void verifyOtpCode(clean);
+    },
+  });
 
   return (
     <div className="min-h-[80vh] flex items-center justify-center py-10 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-emerald-50/40 to-slate-50">
@@ -178,39 +180,6 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
 
           {!otpSent ? (
             <form onSubmit={handleSendOtp} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    نام <span className="text-rose-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      required
-                      value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
-                      placeholder="مثال: فاطمه"
-                      className="w-full pl-3 pr-9 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm outline-none transition"
-                    />
-                    <User className="w-4 h-4 text-slate-400 absolute right-3 top-3" />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    نام خانوادگی <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    placeholder="مثال: حسینی"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm outline-none transition"
-                  />
-                </div>
-              </div>
-
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                   شماره همراه <span className="text-rose-500">*</span>
@@ -229,7 +198,7 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
                   <Smartphone className="w-4 h-4 text-slate-400 absolute right-3.5 top-3.5" />
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
-                  پس از وارد کردن مشخصات و شماره همراه، یک کد تایید یک‌بارمصرف به گوشی شما پیامک می‌شود.
+                  پس از وارد کردن شماره همراه، یک کد تایید یک‌بارمصرف به گوشی شما پیامک می‌شود.
                 </p>
               </div>
 
@@ -252,10 +221,8 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between gap-2 text-xs">
                 <div>
-                  <span className="font-bold text-slate-800 block">
-                    {firstName} {lastName}
-                  </span>
-                  <span className="font-mono text-slate-500 dir-ltr inline-block mt-0.5">
+                  <span className="text-slate-500 block text-[11px]">شماره همراه:</span>
+                  <span className="font-mono font-bold text-slate-800 dir-ltr inline-block mt-0.5">
                     {maskedPhone}
                   </span>
                 </div>
@@ -271,7 +238,7 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
                   className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-900 font-semibold cursor-pointer"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
-                  <span>ویرایش اطلاعات</span>
+                  <span>تغییر شماره</span>
                 </button>
               </div>
 
@@ -308,6 +275,11 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
                   placeholder="------"
                   className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-lg font-mono font-bold tracking-[0.4em] text-center outline-none transition dir-ltr"
                 />
+                {webOtpSupported && Boolean(config?.appDomain) && (
+                  <p className="text-[11px] text-emerald-700 mt-1.5 text-center">
+                    پس از دریافت پیامک روی گوشی، با تایید اعلان مرورگر کد به صورت خودکار وارد می‌شود.
+                  </p>
+                )}
               </div>
 
               <button

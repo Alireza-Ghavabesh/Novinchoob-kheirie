@@ -852,7 +852,9 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                           <div className="text-[11px] text-teal-800 font-semibold flex items-center gap-1">
                             <UserCheck className="w-3 h-3 shrink-0" />
                             <span>
-                              {sub.beneficiary.fullName} ({toPersianDigits(sub.beneficiary.phone)})
+                              {sub.beneficiary.fullName?.trim()
+                                ? `${sub.beneficiary.fullName} (${toPersianDigits(sub.beneficiary.phone)})`
+                                : toPersianDigits(sub.beneficiary.phone)}
                             </span>
                           </div>
                         )}
@@ -886,7 +888,10 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                           {selectedSub.beneficiary && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-900 border border-teal-200 text-[11px] font-bold">
                               <UserCheck className="w-3 h-3" />
-                              پروفایل مددجو: {selectedSub.beneficiary.fullName} —{' '}
+                              پروفایل مددجو:{' '}
+                              {selectedSub.beneficiary.fullName?.trim()
+                                ? `${selectedSub.beneficiary.fullName} — `
+                                : ''}
                               <span className="font-mono dir-ltr">{selectedSub.beneficiary.phone}</span>
                             </span>
                           )}

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AppConfig, Category } from '../../types';
+import { AppConfig, Category, StaffUser } from '../../types';
 import {
   Settings,
   Image,
@@ -27,25 +27,32 @@ import { api } from '../../services/api';
 import { LOGIN_THEMES, getLoginTheme } from '../../utils/loginThemes';
 import { EntityDefinition } from '../../utils/publicFormConfig';
 import { PublicFormBuilderSection } from './PublicFormBuilderSection';
+import { OtpSmsSettingsCard } from './OtpSmsSettingsCard';
 
 interface SettingsTabProps {
+  currentUser?: StaffUser | null;
   config: AppConfig | null;
   needCategories: Category[];
   programCategories: Category[];
   entities: EntityDefinition[];
   onConfigUpdated: (config: AppConfig) => void;
+  onCurrentUserUpdated?: (user: StaffUser) => void;
   onRefreshCategories: () => void;
   onOpenFormBuilder?: () => void;
+  onOpenSmsTab?: () => void;
 }
 
 export const SettingsTab: React.FC<SettingsTabProps> = ({
+  currentUser,
   config,
   needCategories,
   programCategories,
   entities,
   onConfigUpdated,
+  onCurrentUserUpdated,
   onRefreshCategories,
   onOpenFormBuilder,
+  onOpenSmsTab,
 }) => {
   // Identity Form State
   const [instName, setInstName] = useState(config?.instName || 'مؤسسه خیریه حضرت ام‌البنین (س)');
@@ -471,6 +478,18 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Real SMS OTP Authentication & WebOTP App Domain Settings */}
+      <OtpSmsSettingsCard
+        currentUser={currentUser}
+        config={config}
+        onConfigUpdated={(updated) => {
+          setLoginAllowOtp(updated.loginAllowOtp !== false);
+          onConfigUpdated(updated);
+        }}
+        onCurrentUserUpdated={onCurrentUserUpdated}
+        onOpenSmsTab={onOpenSmsTab}
+      />
 
       {/* Login Page Customization Section */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">

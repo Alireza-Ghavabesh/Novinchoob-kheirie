@@ -367,6 +367,10 @@ export default function App() {
                 onRefreshCategories={refreshCategories}
                 onRefreshEntities={refreshEntities}
                 onConfigUpdated={(c) => setConfig(c)}
+                onCurrentUserUpdated={(u) => {
+                  setCurrentUser(u);
+                  localStorage.setItem('OM_CHARITY_CURRENT_USER', JSON.stringify(u));
+                }}
               />
             )}
           </>

@@ -20,15 +20,24 @@ import {
   BellRing,
   Smartphone,
 } from 'lucide-react';
-import { SmsConfig, SmsRule, SmsLog, SmsEventType, SmsTargetType, StaffUser } from '../../types';
+import { AppConfig, SmsConfig, SmsRule, SmsLog, SmsEventType, SmsTargetType, StaffUser } from '../../types';
 import { api } from '../../services/api';
 import { appendSmsCancellationFooter } from '../../utils/smsFormat';
+import { OtpSmsSettingsCard } from './OtpSmsSettingsCard';
 
 interface SmsTabProps {
   currentUser: StaffUser;
+  appConfig?: AppConfig | null;
+  onConfigUpdated?: (config: AppConfig) => void;
+  onCurrentUserUpdated?: (user: StaffUser) => void;
 }
 
-export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
+export const SmsTab: React.FC<SmsTabProps> = ({
+  currentUser,
+  appConfig = null,
+  onConfigUpdated,
+  onCurrentUserUpdated,
+}) => {
   const [subTab, setSubTab] = useState<'rules' | 'config' | 'push' | 'logs' | 'test'>('rules');
   const [config, setConfig] = useState<SmsConfig>({
     id: 1,
@@ -36,6 +45,7 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
     senderLine: '',
     provider: 'GHASEDAK',
     loginOtpTemplate: '',
+    loginOtpMessage: '',
     isEnabled: true,
   });
   const [rules, setRules] = useState<SmsRule[]>([]);
@@ -122,17 +132,6 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
   const notify = (text: string, type: 'success' | 'error' = 'success') => {
     setStatusMsg({ text, type });
     setTimeout(() => setStatusMsg(null), 4000);
-  };
-
-  const handleSaveConfig = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const updated = await api.updateSmsConfig(config);
-      setConfig(updated);
-      notify('تنظیمات سرویس پیامک قاصدک با موفقیت ذخیره شد.');
-    } catch (err: any) {
-      notify(err.message || 'خطا در ذخیره تنظیمات', 'error');
-    }
   };
 
   const handleToggleGlobalEnable = async () => {
@@ -468,7 +467,7 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
           }`}
         >
           <Key className="w-4 h-4" />
-          تنظیمات اتصال قاصدک (API Key)
+          تنظیمات قاصدک، احراز هویت OTP و دامین
         </button>
 
         <button
@@ -960,84 +959,31 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
         </div>
       )}
 
-      {/* 2. CONFIG TAB (GHASEDAK API KEY) */}
+      {/* 2. CONFIG TAB (GHASEDAK API KEY, OTP AUTH & WEBOTP DOMAIN) */}
       {subTab === 'config' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 max-w-2xl mx-auto space-y-6">
-          <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
-              <Key className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-900">تنظیمات اتصال به سرویس پیامک قاصدک (Ghasedak)</h3>
-              <p className="text-xs text-slate-500">
-                بر اساس مستندات وب‌سرویس REST قاصدک (`api.ghasedaksms.com/v2`)
-              </p>
-            </div>
-          </div>
-
-          <form onSubmit={handleSaveConfig} className="space-y-4 text-xs">
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">
-                کلید دسترسی قاصدک (API Key):
-              </label>
-              <input
-                type="text"
-                value={config.apiKey}
-                onChange={e => setConfig({ ...config, apiKey: e.target.value })}
-                placeholder="مثال: 5f1c9d8a3b2e7a1234567890abcdef..."
-                className="w-full border border-slate-300 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
-              <p className="text-[11px] text-slate-400 mt-1">
-                این کلید را می‌توانید از پنل کاربری قاصدک در بخش «تنظیمات وب‌سرویس / کلیدهای API» دریافت کنید. در صورت خالی بودن، ارسال‌ها در حالت شبیه‌سازی (Simulated) در لاگ ثبت می‌شوند.
-              </p>
-            </div>
-
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">
-                شماره خط اختصاصی یا خدماتی فرستنده (اختیاری):
-              </label>
-              <input
-                type="text"
-                value={config.senderLine}
-                onChange={e => setConfig({ ...config, senderLine: e.target.value })}
-                placeholder="مثال: 3000500600 یا 1000..."
-                className="w-full border border-slate-300 rounded-xl px-3 py-2.5 font-mono text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
-              <p className="text-[11px] text-slate-400 mt-1">
-                در صورتی که خالی باشد، خط پیش‌فرض پنل قاصدک شما برای ارسال متن ساده استفاده خواهد شد.
-              </p>
-            </div>
-
-            <div className="pt-2 flex items-center justify-between border-t border-slate-100">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={config.isEnabled}
-                  onChange={e => setConfig({ ...config, isEnabled: e.target.checked })}
-                  className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
-                />
-                <span className="font-semibold text-slate-800">ارسال خودکار پیامک‌ها فعال باشد</span>
-              </label>
-
-              <button
-                type="submit"
-                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow transition"
-              >
-                ذخیره تنظیمات
-              </button>
-            </div>
-          </form>
+        <div className="space-y-6 max-w-5xl mx-auto">
+          <OtpSmsSettingsCard
+            currentUser={currentUser}
+            config={appConfig}
+            externalSmsConfig={config}
+            onConfigUpdated={onConfigUpdated}
+            onCurrentUserUpdated={onCurrentUserUpdated}
+            onSmsConfigSaved={(updatedSms) => {
+              setConfig(updatedSms);
+              notify('تنظیمات سرویس پیامک قاصدک، OTP و دامین WebOTP ذخیره شد.');
+            }}
+          />
 
           {/* Doc Help Box */}
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-2">
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-xs text-amber-900 space-y-2">
             <h5 className="font-bold flex items-center gap-1.5 text-amber-800">
               <Info className="w-4 h-4" />
-              راهنمای سرویس قاصدک:
+              راهنمای اتصال واقعی قاصدک و تکمیل خودکار پیامک (WebOTP):
             </h5>
-            <ul className="list-disc list-inside space-y-1 text-[11px] text-amber-800/90 leading-relaxed">
-              <li>برای جلوگیری از بلاک شدن پیامک در گوشی‌های دارای مسدودی پیامک‌های تبلیغاتی (Blacklist)، از قابلیت <strong>الگو / OTP قاصدک</strong> استفاده کنید.</li>
-              <li>در صورت استفاده از خطوط اختصاصی معمولی، گیرندگانی که پیامک تبلیغاتی را مسدود کرده باشند پیام را دریافت نخواهند کرد.</li>
-              <li>برای اجرای محلی بدون اینترنت، نیازی به وارد کردن کلید نیست؛ سیستم تمام رویدادها را ثبت کرده و وضعیت را شبیه‌سازی می‌کند.</li>
+            <ul className="list-disc list-inside space-y-1.5 text-[11px] text-amber-800/90 leading-relaxed">
+              <li>اگر <strong>خط ارتباطی + توکن</strong> دارید، کافیست توکن و شماره خط را وارد کرده و «نام الگوی OTP» را خالی بگذارید؛ سامانه پیامک کد ورود را با خط ارتباطی شما، عبارت الزامی <strong>لغو 11</strong> و خط استاندارد WebOTP ارسال می‌کند.</li>
+              <li>برای عبور از بلک‌لیست تبلیغاتی اپراتورها می‌توانید یک <strong>الگوی OTP</strong> در پنل قاصدک ثبت کرده و نام الگو را در کادر مربوطه وارد کنید.</li>
+              <li>قابلیت <strong>خواندن خودکار کد پیامکی روی گوشی (تایید با یک لمس)</strong> روی دامین واقعی با پروتکل <strong>HTTPS</strong> عمل می‌کند؛ کافیست نام دامین خود را در بخش بالا ذخیره کنید.</li>
             </ul>
           </div>
         </div>

@@ -198,7 +198,9 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                 پروفایل اختصاصی مددجو — {config?.instName || 'مؤسسه خیریه'}
               </span>
               <h2 className="text-lg sm:text-2xl font-extrabold text-white">
-                خوش آمدید، {account.fullName}
+                {account.fullName?.trim()
+                  ? `خوش آمدید، ${account.fullName}`
+                  : 'خوش آمدید، مددجوی گرامی'}
               </h2>
               <p className="text-xs text-emerald-200 font-mono dir-ltr text-right">
                 شماره همراه حساب: {account.phone}

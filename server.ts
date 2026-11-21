@@ -8,7 +8,11 @@ import { fileURLToPath } from 'url';
 
 import { GhasedakSmsService } from './src/services/smsService.ts';
 import { PushNotificationService } from './src/services/pushService.ts';
-import { appendSmsCancellationFooter } from './src/utils/smsFormat.ts';
+import {
+  appendSmsCancellationFooter,
+  buildOtpSmsMessage,
+  normalizeAppDomain,
+} from './src/utils/smsFormat.ts';
 import {
   CUSTOM_FORM_STATUS_LABELS,
   CustomFormSmsRule,
@@ -438,12 +442,13 @@ app.put('/api/config', requireAuth, requirePerm('manageSettings'), async (req, r
       'loginAllowPassword',
       'loginAllowOtp',
       'loginShowBackLink',
+      'appDomain',
       'publicFormConfig',
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
       if (req.body[key] !== undefined) {
-        updateData[key] = req.body[key];
+        updateData[key] = key === 'appDomain' ? normalizeAppDomain(req.body[key]) : req.body[key];
       }
     }
     const config = await prisma.appConfig.upsert({
@@ -668,8 +673,19 @@ app.post('/api/auth/otp/send', async (req, res) => {
       }
     }
 
+    const appConf = await prisma.appConfig.findUnique({ where: { id: 1 } });
+    if (appConf && appConf.loginAllowOtp === false) {
+      return res.status(403).json({
+        error: 'ورود با پیامک یک‌بارمصرف (OTP) توسط مدیر سیستم غیرفعال شده است.',
+      });
+    }
+
     const smsConf = await prisma.smsConfig.findUnique({ where: { id: 1 } });
-    if (!smsConf || !smsConf.isEnabled || !smsConf.apiKey?.trim()) {
+    const cleanApiKey = smsConf?.apiKey?.trim() || '';
+    const cleanSenderLine = smsConf?.senderLine?.trim() || '';
+    const cleanOtpTemplate = smsConf?.loginOtpTemplate?.trim() || '';
+
+    if (!smsConf || !smsConf.isEnabled || !cleanApiKey || cleanApiKey === 'DEMO_KEY') {
       await prisma.smsLog.create({
         data: {
           ruleTitle: 'ورود با شماره موبایل (OTP)',
@@ -677,15 +693,14 @@ app.post('/api/auth/otp/send', async (req, res) => {
           receptor: cleanPhone,
           message: 'تلاش برای ارسال کد تایید ورود با موبایل',
           status: 'FAILED',
-          errorDetails: 'کلید API قاصدک تنظیم نشده یا سرویس پیامک غیرفعال است.',
+          errorDetails: 'توکن واقعی قاصدک تنظیم نشده یا سرویس پیامک OTP غیرفعال است.',
         },
       });
       return res.status(503).json({
-        error: 'سرویس پیامک قاصدک پیکربندی یا فعال نشده است. لطفاً از مدیر سیستم بخواهید کلید API قاصدک را در پنل مدیریت تنظیم کند.',
+        error: 'سرویس پیامک OTP پیکربندی یا فعال نشده است. لطفاً در بخش «تنظیمات و هویت» توکن و خط ارتباطی قاصدک را ثبت و فعال کنید.',
       });
     }
 
-    const appConf = await prisma.appConfig.findUnique({ where: { id: 1 } });
     const instName = appConf?.instName || 'مؤسسه خیریه';
 
     // Generate cryptographically random 6-digit code
@@ -707,18 +722,24 @@ app.post('/api/auth/otp/send', async (req, res) => {
       },
     });
 
-    const messageText = appendSmsCancellationFooter(`کد ورود شما به سامانه ${instName}: ${otpCode}\nاعتبار کد: ۲ دقیقه`);
-    const usePattern = Boolean(smsConf.loginOtpTemplate && smsConf.loginOtpTemplate.trim());
+    const messageText = buildOtpSmsMessage({
+      code: otpCode,
+      instName,
+      customTemplate: smsConf.loginOtpMessage,
+      audience: 'STAFF',
+      appDomain: appConf?.appDomain,
+    });
+    const usePattern = Boolean(cleanOtpTemplate);
 
     const sendRes = await smsService.sendGhasedak(
-      smsConf.apiKey,
-      smsConf.senderLine,
+      cleanApiKey,
+      cleanSenderLine,
       cleanPhone,
       messageText,
       usePattern
         ? {
             templateType: 'OTP',
-            templateName: smsConf.loginOtpTemplate.trim(),
+            templateName: cleanOtpTemplate,
             param1: otpCode,
           }
         : undefined
@@ -730,7 +751,7 @@ app.post('/api/auth/otp/send', async (req, res) => {
         eventType: 'USER_LOGIN_OTP',
         receptor: cleanPhone,
         message: usePattern
-          ? `ارسال کد ورود با الگوی ${smsConf.loginOtpTemplate}`
+          ? `ارسال کد ورود با الگوی ${cleanOtpTemplate}`
           : `ارسال کد تایید یک‌بارمصرف ورود برای ${user.name}`,
         status: sendRes.success ? 'SUCCESS' : 'FAILED',
         providerMsgId: sendRes.messageId || null,
@@ -759,6 +780,11 @@ app.post('/api/auth/otp/send', async (req, res) => {
 // Verify mobile OTP code and issue real session
 app.post('/api/auth/otp/verify', async (req, res) => {
   try {
+    const appConf = await prisma.appConfig.findUnique({ where: { id: 1 } });
+    if (appConf && appConf.loginAllowOtp === false) {
+      return res.status(403).json({ error: 'ورود با پیامک یک‌بارمصرف غیرفعال شده است.' });
+    }
+
     const cleanPhone = normalizeIranMobile(String(req.body?.phone || ''));
     const cleanCode = normalizeDigits(String(req.body?.code || '')).trim();
 
@@ -1606,6 +1632,7 @@ app.get('/api/sms/config', requireAuth, requirePerm('manageSettings'), async (_r
           senderLine: '',
           provider: 'GHASEDAK',
           loginOtpTemplate: '',
+          loginOtpMessage: '',
           isEnabled: true,
         },
       });
@@ -1618,23 +1645,29 @@ app.get('/api/sms/config', requireAuth, requirePerm('manageSettings'), async (_r
 
 app.put('/api/sms/config', requireAuth, requirePerm('manageSettings'), async (req, res) => {
   try {
-    const { apiKey, senderLine, provider, loginOtpTemplate, isEnabled } = req.body;
+    const { apiKey, senderLine, provider, loginOtpTemplate, loginOtpMessage, isEnabled } = req.body;
+    const cleanKey = apiKey !== undefined ? String(apiKey).trim() : undefined;
+    const cleanLine = senderLine !== undefined ? String(senderLine).trim() : undefined;
+    const cleanTemplate = loginOtpTemplate !== undefined ? String(loginOtpTemplate).trim() : undefined;
+    const cleanOtpMsg = loginOtpMessage !== undefined ? String(loginOtpMessage).trim() : undefined;
     const conf = await prisma.smsConfig.upsert({
       where: { id: 1 },
       update: {
-        apiKey: apiKey !== undefined ? apiKey : undefined,
-        senderLine: senderLine !== undefined ? senderLine : undefined,
+        apiKey: cleanKey,
+        senderLine: cleanLine,
         provider: provider || 'GHASEDAK',
-        loginOtpTemplate: loginOtpTemplate !== undefined ? loginOtpTemplate : undefined,
-        isEnabled: isEnabled !== undefined ? isEnabled : true,
+        loginOtpTemplate: cleanTemplate,
+        loginOtpMessage: cleanOtpMsg,
+        isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
       },
       create: {
         id: 1,
-        apiKey: apiKey || '',
-        senderLine: senderLine || '',
+        apiKey: cleanKey || '',
+        senderLine: cleanLine || '',
         provider: provider || 'GHASEDAK',
-        loginOtpTemplate: loginOtpTemplate || '',
-        isEnabled: isEnabled !== undefined ? isEnabled : true,
+        loginOtpTemplate: cleanTemplate || '',
+        loginOtpMessage: cleanOtpMsg || '',
+        isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
       },
     });
     res.json(conf);
@@ -1871,6 +1904,83 @@ app.post('/api/sms/test', requireAuth, requirePerm('manageSettings'), async (req
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: 'Failed to test SMS', details: String(error) });
+  }
+});
+
+// 4.5 Test Real OTP SMS Sending (using token + senderLine + optional template)
+app.post('/api/sms/test-otp', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+  try {
+    const cleanPhone = normalizeIranMobile(String(req.body?.phone || ''));
+    if (!isValidIranMobile(cleanPhone)) {
+      return res.status(400).json({ error: 'شماره موبایل آزمایشی معتبر نیست (مثال: 09123456789).' });
+    }
+
+    const conf = await prisma.smsConfig.findUnique({ where: { id: 1 } });
+    const appConf = await prisma.appConfig.findUnique({ where: { id: 1 } });
+    const effectiveApiKey = String(req.body?.apiKey ?? conf?.apiKey ?? '').trim();
+    const effectiveLine = String(req.body?.senderLine ?? conf?.senderLine ?? '').trim();
+    const effectiveTemplate = String(req.body?.loginOtpTemplate ?? conf?.loginOtpTemplate ?? '').trim();
+    const effectiveOtpMessage = String(req.body?.loginOtpMessage ?? conf?.loginOtpMessage ?? '').trim();
+    const effectiveDomain = normalizeAppDomain(req.body?.appDomain ?? appConf?.appDomain ?? '');
+
+    if (!effectiveApiKey || effectiveApiKey === 'DEMO_KEY') {
+      return res.status(400).json({ error: 'ابتدا توکن / کلید واقعی وب‌سرویس قاصدک را وارد نمایید.' });
+    }
+
+    const sampleCode = String(crypto.randomInt(100000, 999999));
+    const instName = appConf?.instName || 'مؤسسه خیریه';
+    const messageText = buildOtpSmsMessage({
+      code: sampleCode,
+      instName,
+      customTemplate: effectiveOtpMessage,
+      audience: 'STAFF',
+      appDomain: effectiveDomain,
+    });
+
+    const usePattern = Boolean(effectiveTemplate);
+    const sendRes = await smsService.sendGhasedak(
+      effectiveApiKey,
+      effectiveLine,
+      cleanPhone,
+      messageText,
+      usePattern
+        ? {
+            templateType: 'OTP',
+            templateName: effectiveTemplate,
+            param1: sampleCode,
+          }
+        : undefined
+    );
+
+    await prisma.smsLog.create({
+      data: {
+        ruleTitle: 'تست واقعی ارسال کد OTP ورود',
+        eventType: 'OTP_CONFIG_TEST',
+        receptor: cleanPhone,
+        message: usePattern ? `تست ارسال OTP با الگوی ${effectiveTemplate}` : messageText,
+        status: sendRes.success ? 'SUCCESS' : 'FAILED',
+        providerMsgId: sendRes.messageId || null,
+        cost: sendRes.cost || null,
+        errorDetails: sendRes.error || null,
+      },
+    });
+
+    if (!sendRes.success) {
+      return res.status(502).json({
+        success: false,
+        error: sendRes.error || 'ارسال پیامک OTP با خطا مواجه شد.',
+      });
+    }
+
+    res.json({
+      success: true,
+      messageId: sendRes.messageId,
+      mode: usePattern ? 'OTP_TEMPLATE' : 'SENDER_LINE',
+      maskedPhone: maskPhone(cleanPhone),
+      previewMessage: usePattern ? `ارسال از طریق الگوی قاصدک (${effectiveTemplate}) با کد ${sampleCode}` : messageText,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در تست ارسال کد OTP', details: String(error) });
   }
 });
 
@@ -2699,13 +2809,8 @@ app.delete(
 // --- Beneficiary Portal & OTP Auth Endpoints ---
 app.post('/api/beneficiary/auth/otp/send', async (req, res) => {
   try {
-    const firstName = String(req.body?.firstName || '').trim();
-    const lastName = String(req.body?.lastName || '').trim();
     const cleanPhone = normalizeIranMobile(String(req.body?.phone || ''));
 
-    if (!firstName || !lastName) {
-      return res.status(400).json({ error: 'لطفاً نام و نام خانوادگی خود را به صورت کامل وارد نمایید.' });
-    }
     if (!isValidIranMobile(cleanPhone)) {
       return res.status(400).json({ error: 'شماره همراه واردشده معتبر نیست (مثال: 09123456789).' });
     }
@@ -2746,9 +2851,13 @@ app.post('/api/beneficiary/auth/otp/send', async (req, res) => {
       },
     });
 
-    const messageText = appendSmsCancellationFooter(
-      `${firstName} ${lastName} گرامی، کد تایید ورود به پروفایل مددجو در ${instName}: ${otpCode}\nاعتبار کد: ۲ دقیقه`
-    );
+    const messageText = buildOtpSmsMessage({
+      code: otpCode,
+      instName,
+      customTemplate: smsConf?.loginOtpMessage,
+      audience: 'BENEFICIARY',
+      appDomain: appConf?.appDomain,
+    });
 
     const hasApiKey = Boolean(smsConf?.isEnabled && smsConf?.apiKey?.trim() && smsConf.apiKey.trim() !== 'DEMO_KEY');
     const usePattern = hasApiKey && Boolean(smsConf?.loginOtpTemplate && smsConf.loginOtpTemplate.trim());
@@ -2811,14 +2920,9 @@ app.post('/api/beneficiary/auth/otp/send', async (req, res) => {
 
 app.post('/api/beneficiary/auth/otp/verify', async (req, res) => {
   try {
-    const firstName = String(req.body?.firstName || '').trim();
-    const lastName = String(req.body?.lastName || '').trim();
     const cleanPhone = normalizeIranMobile(String(req.body?.phone || ''));
     const cleanCode = normalizeDigits(String(req.body?.code || '')).trim();
 
-    if (!firstName || !lastName) {
-      return res.status(400).json({ error: 'نام و نام خانوادگی الزامی است.' });
-    }
     if (!isValidIranMobile(cleanPhone)) {
       return res.status(400).json({ error: 'شماره همراه معتبر نیست.' });
     }
@@ -2852,11 +2956,10 @@ app.post('/api/beneficiary/auth/otp/verify', async (req, res) => {
 
     await prisma.otpCode.update({ where: { id: otpRecord.id }, data: { used: true } });
 
-    const fullName = `${firstName} ${lastName}`.trim();
     const account = await prisma.beneficiaryAccount.upsert({
       where: { phone: cleanPhone },
-      update: { firstName, lastName, fullName },
-      create: { firstName, lastName, fullName, phone: cleanPhone, isActive: true },
+      update: {},
+      create: { firstName: '', lastName: '', fullName: '', phone: cleanPhone, isActive: true },
     });
 
     if (!account.isActive) {

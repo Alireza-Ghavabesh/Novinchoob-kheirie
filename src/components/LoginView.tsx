@@ -19,6 +19,7 @@ import {
 import { api } from '../services/api';
 import { StaffUser, AppConfig } from '../types';
 import { getLoginTheme } from '../utils/loginThemes';
+import { useWebOtp } from '../utils/useWebOtp';
 
 interface LoginViewProps {
   config: AppConfig | null;
@@ -153,18 +154,17 @@ export const LoginView: React.FC<LoginViewProps> = ({
     }
   };
 
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const verifyOtpCode = async (rawCode: string) => {
     setError('');
-
-    if (!otpCode.trim()) {
+    const code = rawCode.trim();
+    if (!code) {
       setError('لطفاً کد تایید پیامک‌شده را وارد نمایید.');
       return;
     }
 
     setLoading(true);
     try {
-      const res = await api.verifyLoginOtp(mobilePhone.trim(), otpCode.trim());
+      const res = await api.verifyLoginOtp(mobilePhone.trim(), code);
       onLoginSuccess(res.user, res.token);
     } catch (err: any) {
       setError(err.message || 'کد تایید واردشده صحیح نیست.');
@@ -172,6 +172,20 @@ export const LoginView: React.FC<LoginViewProps> = ({
       setLoading(false);
     }
   };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await verifyOtpCode(otpCode);
+  };
+
+  const webOtpSupported = useWebOtp({
+    active: authMethod === 'mobile' && otpSent && !loading,
+    onCodeReceived: (autoCode) => {
+      setOtpCode(autoCode);
+      setInfoMsg('کد تایید به صورت خودکار از پیامک خوانده شد. در حال ورود...');
+      void verifyOtpCode(autoCode);
+    },
+  });
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -473,6 +487,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
                       placeholder="------"
                       className={`w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 ${theme.focusRing} text-lg font-mono font-bold tracking-[0.4em] text-center outline-none transition dir-ltr`}
                     />
+                    {webOtpSupported && Boolean(config?.appDomain) && (
+                      <p className="text-[11px] text-emerald-700 mt-1.5 text-center">
+                        پس از دریافت پیامک روی گوشی، با تایید اعلان مرورگر کد به صورت خودکار وارد می‌شود.
+                      </p>
+                    )}
                   </div>
 
                   <button

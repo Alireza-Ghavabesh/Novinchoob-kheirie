@@ -26,7 +26,9 @@ export class GhasedakSmsService {
     p = p.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
     p = p.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
     p = p.replace(/[\s\-\(\)\+]/g, '');
-    if (p.startsWith('98')) {
+    if (p.startsWith('0098')) {
+      p = '0' + p.substring(4);
+    } else if (p.startsWith('98')) {
       p = '0' + p.substring(2);
     }
     return p;
@@ -72,8 +74,8 @@ export class GhasedakSmsService {
 
   /**
    * Send single SMS via Ghasedak REST API
-   * Supports Simple SMS API: https://api.ghasedak.me/v2/sms/send/simple
-   * Supports OTP / Pattern API: https://api.ghasedak.me/v2/verification/send/simple
+   * Supports Simple SMS API: https://api.ghasedaksms.com/v2/sms/send/simple
+   * Supports OTP / Pattern API: https://api.ghasedaksms.com/v2/verification/send/simple
    */
   public async sendGhasedak(
     apiKey: string,
@@ -88,8 +90,12 @@ export class GhasedakSmsService {
       param3?: string | null;
     }
   ): Promise<{ success: boolean; messageId?: string; cost?: number; error?: string }> {
-    if (!apiKey) {
-      return { success: false, error: 'کلید API قاصدک (apikey) تنظیم نشده است.' };
+    const cleanApiKey = (apiKey || '').trim();
+    const cleanSenderLine = (senderLine || '').trim();
+    const cleanTemplateName = (rule?.templateName || '').trim();
+
+    if (!cleanApiKey || cleanApiKey === 'DEMO_KEY') {
+      return { success: false, error: 'توکن / کلید API قاصدک (apikey) تنظیم نشده است.' };
     }
 
     const cleanReceptor = this.normalizePhone(receptor);
@@ -98,12 +104,11 @@ export class GhasedakSmsService {
     }
 
     try {
-      if (rule?.templateType === 'OTP' && rule.templateName) {
+      if (rule?.templateType === 'OTP' && cleanTemplateName) {
         // Send via Ghasedak OTP / Template Verification API
-        // Endpoint: https://api.ghasedak.me/v2/verification/send/simple
         const params = new URLSearchParams();
         params.append('receptor', cleanReceptor);
-        params.append('template', rule.templateName);
+        params.append('template', cleanTemplateName);
         params.append('type', '1'); // 1 = text
         if (rule.param1) params.append('param1', rule.param1);
         if (rule.param2) params.append('param2', rule.param2);
@@ -112,7 +117,7 @@ export class GhasedakSmsService {
         const response = await fetch('https://api.ghasedaksms.com/v2/verification/send/simple', {
           method: 'POST',
           headers: {
-            'apikey': apiKey,
+            'apikey': cleanApiKey,
             'Content-Type': 'application/x-www-form-urlencoded',
             'cache-control': 'no-cache',
           },
@@ -120,30 +125,37 @@ export class GhasedakSmsService {
         });
 
         const resData = await response.json().catch(() => ({}));
-        if (response.ok && (resData?.result?.code === 200 || resData?.result?.status === 'success' || resData?.items)) {
+        const hasErrorCode = resData?.result?.code !== undefined && Number(resData.result.code) !== 200;
+        const isSuccess =
+          response.ok &&
+          !hasErrorCode &&
+          (Number(resData?.result?.code) === 200 ||
+            resData?.result?.status === 'success' ||
+            (Array.isArray(resData?.items) && resData.items.length > 0));
+
+        if (isSuccess) {
           return {
             success: true,
             messageId: String(resData?.items?.[0] || resData?.result?.message || 'OTP_SENT'),
           };
         } else {
           const errDetail = resData?.result?.message || JSON.stringify(resData);
-          return { success: false, error: `Ghasedak OTP Error (${response.status}): ${errDetail}` };
+          return { success: false, error: `خطای وب‌سرویس OTP قاصدک (${resData?.result?.code || response.status}): ${errDetail}` };
         }
       } else {
         // Send via Simple SMS API
-        // Endpoint: https://api.ghasedaksms.com/v2/sms/send/simple
         const finalMessage = appendSmsCancellationFooter(message);
         const params = new URLSearchParams();
         params.append('message', finalMessage);
         params.append('receptor', cleanReceptor);
-        if (senderLine && senderLine.trim()) {
-          params.append('linenumber', senderLine.trim());
+        if (cleanSenderLine) {
+          params.append('linenumber', cleanSenderLine);
         }
 
         const response = await fetch('https://api.ghasedaksms.com/v2/sms/send/simple', {
           method: 'POST',
           headers: {
-            'apikey': apiKey,
+            'apikey': cleanApiKey,
             'Content-Type': 'application/x-www-form-urlencoded',
             'cache-control': 'no-cache',
           },
@@ -151,7 +163,14 @@ export class GhasedakSmsService {
         });
 
         const resData = await response.json().catch(() => ({}));
-        if (response.ok && (resData?.result?.code === 200 || resData?.items?.length)) {
+        const hasErrorCode = resData?.result?.code !== undefined && Number(resData.result.code) !== 200;
+        const isSuccess =
+          response.ok &&
+          !hasErrorCode &&
+          (Number(resData?.result?.code) === 200 ||
+            (Array.isArray(resData?.items) && resData.items.length > 0));
+
+        if (isSuccess) {
           return {
             success: true,
             messageId: String(resData?.items?.[0] || 'SMS_SENT'),
@@ -159,7 +178,7 @@ export class GhasedakSmsService {
           };
         } else {
           const errDetail = resData?.result?.message || JSON.stringify(resData);
-          return { success: false, error: `Ghasedak Simple Error (${response.status}): ${errDetail}` };
+          return { success: false, error: `خطای پیامک قاصدک (${resData?.result?.code || response.status}): ${errDetail}` };
         }
       }
     } catch (err: any) {

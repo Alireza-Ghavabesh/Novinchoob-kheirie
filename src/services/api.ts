@@ -375,6 +375,31 @@ export const api = {
     }
     return data;
   },
+  testOtpSms: async (payload: {
+    phone: string;
+    apiKey?: string;
+    senderLine?: string;
+    loginOtpTemplate?: string;
+    loginOtpMessage?: string;
+    appDomain?: string;
+  }): Promise<{
+    success: boolean;
+    messageId?: string;
+    mode?: string;
+    maskedPhone?: string;
+    previewMessage?: string;
+  }> => {
+    const res = await authFetch('/api/sms/test-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await parseJsonOrThrow<any>(res, 'خطا در ارسال پیامک تست OTP');
+    if (data.success === false) {
+      throw new Error(data.error || 'ارسال ناموفق بود');
+    }
+    return data;
+  },
 
   // Web Push
   getPushPublicKey: async (): Promise<string> => {
@@ -547,8 +572,6 @@ export const api = {
 
   // Beneficiary OTP Auth & Profile Portal
   sendBeneficiaryOtp: async (data: {
-    firstName: string;
-    lastName: string;
     phone: string;
   }): Promise<{
     success: boolean;
@@ -565,8 +588,6 @@ export const api = {
     return parseJsonOrThrow(res, 'خطا در ارسال کد تایید');
   },
   verifyBeneficiaryOtp: async (data: {
-    firstName: string;
-    lastName: string;
     phone: string;
     code: string;
   }): Promise<{ beneficiary: BeneficiaryAccount; token: string }> => {

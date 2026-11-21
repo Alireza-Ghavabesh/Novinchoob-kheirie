@@ -122,7 +122,11 @@ export const Header: React.FC<HeaderProps> = ({
                   }`}
                 >
                   <UserCheck className="w-4 h-4 text-amber-300" />
-                  <span>پروفایل {currentBeneficiary.firstName}</span>
+                  <span>
+                    {currentBeneficiary.firstName?.trim()
+                      ? `پروفایل ${currentBeneficiary.firstName}`
+                      : 'پروفایل مددجو'}
+                  </span>
                 </button>
                 {onBeneficiaryLogout && (
                   <button
@@ -310,7 +314,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <UserCheck className="w-4 h-4 text-amber-300" />
                 <span>
                   {currentBeneficiary
-                    ? `پروفایل مددجو (${currentBeneficiary.fullName})`
+                    ? `پروفایل مددجو (${currentBeneficiary.fullName?.trim() || currentBeneficiary.phone})`
                     : 'ورود / پروفایل مددجو'}
                 </span>
               </div>
