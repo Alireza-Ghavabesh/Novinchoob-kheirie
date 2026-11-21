@@ -22,11 +22,15 @@ import {
   Lock,
   Smartphone,
   Info,
+  UserCheck,
+  EyeOff,
+  Wand2,
+  ClipboardList,
+  Save,
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { LOGIN_THEMES, getLoginTheme } from '../../utils/loginThemes';
 import { EntityDefinition } from '../../utils/publicFormConfig';
-import { PublicFormBuilderSection } from './PublicFormBuilderSection';
 import { OtpSmsSettingsCard } from './OtpSmsSettingsCard';
 
 interface SettingsTabProps {
@@ -82,7 +86,26 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   const [restoreMsg, setRestoreMsg] = useState('');
   const [restoreErr, setRestoreErr] = useState('');
   const [catError, setCatError] = useState('');
-  const [copiedFormUrl, setCopiedFormUrl] = useState(false);
+  const [copiedLinkKey, setCopiedLinkKey] = useState<'form' | 'beneficiary' | 'admin' | null>(null);
+
+  // Access Links & Visibility State
+  const [beneficiaryLoginSlug, setBeneficiaryLoginSlug] = useState(
+    config?.beneficiaryLoginSlug || 'beneficiary'
+  );
+  const [adminLoginSlug, setAdminLoginSlug] = useState(config?.adminLoginSlug || 'admin-portal');
+  const [hideAdminLoginButton, setHideAdminLoginButton] = useState(
+    config?.hideAdminLoginButton !== false
+  );
+  const [savingAccessLinks, setSavingAccessLinks] = useState(false);
+  const [accessLinksSuccess, setAccessLinksSuccess] = useState(false);
+  const [accessLinksError, setAccessLinksError] = useState('');
+
+  React.useEffect(() => {
+    if (!config) return;
+    if (config.beneficiaryLoginSlug) setBeneficiaryLoginSlug(config.beneficiaryLoginSlug);
+    if (config.adminLoginSlug) setAdminLoginSlug(config.adminLoginSlug);
+    setHideAdminLoginButton(config.hideAdminLoginButton !== false);
+  }, [config?.beneficiaryLoginSlug, config?.adminLoginSlug, config?.hideAdminLoginButton]);
 
   // Login Page Customization State
   const [loginTitle, setLoginTitle] = useState(
@@ -109,13 +132,58 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   const [loginCfgSuccess, setLoginCfgSuccess] = useState(false);
   const [loginCfgError, setLoginCfgError] = useState('');
 
-  const publicFormUrl =
-    typeof window !== 'undefined' ? `${window.location.origin}/form` : '/form';
+  const cleanSlugPreview = (raw: string, fallback: string) =>
+    raw
+      .trim()
+      .toLowerCase()
+      .replace(/^\/+|\/+$/g, '')
+      .replace(/[^a-z0-9-_]/g, '') || fallback;
 
-  const handleCopyFormUrl = () => {
-    navigator.clipboard.writeText(publicFormUrl);
-    setCopiedFormUrl(true);
-    setTimeout(() => setCopiedFormUrl(false), 2500);
+  const baseOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const publicFormUrl = `${baseOrigin}/form`;
+  const effectiveBeneficiarySlug = cleanSlugPreview(beneficiaryLoginSlug, 'beneficiary');
+  const effectiveAdminSlug = cleanSlugPreview(adminLoginSlug, 'admin-portal');
+  const beneficiaryPortalUrl = `${baseOrigin}/${effectiveBeneficiarySlug}`;
+  const adminPortalUrl = `${baseOrigin}/${effectiveAdminSlug}`;
+  const customDomainOrigin = config?.appDomain ? `https://${config.appDomain}` : '';
+
+  const handleCopyAccessUrl = (key: 'form' | 'beneficiary' | 'admin', url: string) => {
+    navigator.clipboard.writeText(url);
+    setCopiedLinkKey(key);
+    setTimeout(() => setCopiedLinkKey(null), 2500);
+  };
+
+  const generateRandomAdminSlug = () => {
+    const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+    let suffix = '';
+    for (let i = 0; i < 6; i++) {
+      suffix += chars[Math.floor(Math.random() * chars.length)];
+    }
+    setAdminLoginSlug(`modir-${suffix}`);
+  };
+
+  const handleSaveAccessLinks = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAccessLinksError('');
+    setAccessLinksSuccess(false);
+    setSavingAccessLinks(true);
+    try {
+      const updated = await api.updateConfig({
+        beneficiaryLoginSlug: beneficiaryLoginSlug.trim(),
+        adminLoginSlug: adminLoginSlug.trim(),
+        hideAdminLoginButton,
+      });
+      setBeneficiaryLoginSlug(updated.beneficiaryLoginSlug || 'beneficiary');
+      setAdminLoginSlug(updated.adminLoginSlug || 'admin-portal');
+      setHideAdminLoginButton(updated.hideAdminLoginButton !== false);
+      onConfigUpdated(updated);
+      setAccessLinksSuccess(true);
+      setTimeout(() => setAccessLinksSuccess(false), 4000);
+    } catch (err: any) {
+      setAccessLinksError(err?.message || 'خطا در ذخیره تنظیمات لینک‌های دسترسی');
+    } finally {
+      setSavingAccessLinks(false);
+    }
   };
 
   // Logo file upload handler
@@ -301,48 +369,267 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
   return (
     <div className="space-y-8">
-      {/* Standalone Public Form Shareable Link */}
-      <div className="bg-gradient-to-l from-emerald-950 via-emerald-900 to-teal-900 text-white rounded-2xl border border-emerald-700/60 shadow-sm p-6 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Dedicated Access Links Manager (Beneficiary Login, Hidden Admin Login, Public Form) */}
+      <form
+        onSubmit={handleSaveAccessLinks}
+        className="bg-white rounded-2xl border-2 border-emerald-200 shadow-sm p-6 sm:p-8 space-y-6"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-amber-400/20 text-amber-300 flex items-center justify-center border border-amber-400/30 shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
               <Link2 className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-sm sm:text-base text-white">
-                لینک اختصاصی فرم عمومی مراجعین (بدون دکمه ورود و منوهای سامانه)
+              <h3 className="font-extrabold text-base text-slate-900">
+                مدیریت لینک‌های دسترسی (ورود مددجو، ورود مخفی مدیریت و فرم عمومی)
               </h3>
-              <p className="text-[11px] sm:text-xs text-emerald-200/90 mt-0.5">
-                این لینک فقط فرم ثبت درخواست کمک و بخش استعلام کد رهگیری را نمایش می‌دهد و کاربر هیچ دسترسی یا دکمه‌ای برای ورود به پنل کادر نخواهد داشت.
+              <p className="text-xs text-slate-500 mt-0.5">
+                لینک اختصاصی مددجویان (بدون نمایش گزینه ورود مدیریت) و آدرس مخفی ورود کادر را از اینجا مشاهده، کپی و ویرایش کنید.
               </p>
             </div>
           </div>
 
+          <button
+            type="submit"
+            disabled={savingAccessLinks}
+            className="inline-flex items-center justify-center gap-1.5 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition disabled:opacity-50 cursor-pointer shrink-0"
+          >
+            <Save className="w-4 h-4" />
+            <span>{savingAccessLinks ? 'در حال ذخیره...' : 'ذخیره لینک‌های دسترسی'}</span>
+          </button>
+        </div>
+
+        {accessLinksSuccess && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center gap-2 font-semibold">
+            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>تنظیمات لینک‌های دسترسی با موفقیت ذخیره شد. لطفاً لینک اختصاصی مدیریت را یادداشت یا Bookmark کنید.</span>
+          </div>
+        )}
+
+        {accessLinksError && (
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-start gap-2 whitespace-pre-line">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <span>{accessLinksError}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 text-xs">
+          {/* 1. Dedicated Beneficiary Login Link */}
+          <div className="rounded-2xl border border-teal-200 bg-teal-50/40 p-5 space-y-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-teal-600 text-white flex items-center justify-center shrink-0">
+                  <UserCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm text-teal-950">
+                    ۱. لینک اختصاصی ورود مددجو (مناسب پیامک)
+                  </h4>
+                  <p className="text-[11px] text-teal-800/80">
+                    ورود فقط با موبایل و کد تایید — بدون هیچ دکمه‌ای برای ورود مدیریت
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                مسیر آدرس ورود مددجو (Slug انگلیسی):
+              </label>
+              <div className="flex items-center gap-1.5 dir-ltr">
+                <span className="px-2.5 py-2 rounded-xl bg-slate-100 border border-slate-200 text-slate-500 font-mono text-[11px] shrink-0">
+                  /
+                </span>
+                <input
+                  type="text"
+                  required
+                  value={beneficiaryLoginSlug}
+                  onChange={(e) => setBeneficiaryLoginSlug(e.target.value)}
+                  placeholder="beneficiary"
+                  className="flex-1 px-3 py-2 rounded-xl border border-teal-300 bg-white outline-none focus:ring-2 focus:ring-teal-500 font-mono text-left text-xs font-bold text-slate-900"
+                />
+              </div>
+            </div>
+
+            <div className="bg-white border border-teal-200 rounded-xl p-2.5 space-y-2">
+              <div className="font-mono text-[11px] text-teal-900 dir-ltr text-left break-all select-all">
+                {beneficiaryPortalUrl}
+              </div>
+              {customDomainOrigin && (
+                <div className="font-mono text-[10px] text-slate-500 dir-ltr text-left break-all border-t border-slate-100 pt-1.5">
+                  دامنه اصلی: {`${customDomainOrigin}/${effectiveBeneficiarySlug}`}
+                </div>
+              )}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleCopyAccessUrl(
+                      'beneficiary',
+                      customDomainOrigin
+                        ? `${customDomainOrigin}/${effectiveBeneficiarySlug}`
+                        : beneficiaryPortalUrl
+                    )
+                  }
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl transition cursor-pointer"
+                >
+                  {copiedLinkKey === 'beneficiary' ? (
+                    <CheckCircle className="w-3.5 h-3.5" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
+                  <span>{copiedLinkKey === 'beneficiary' ? 'کپی شد!' : 'کپی لینک برای ارسال به مددجو'}</span>
+                </button>
+                <a
+                  href={`/${effectiveBeneficiarySlug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold rounded-xl transition"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>مشاهده</span>
+                </a>
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Secret / Private Admin Login Link */}
+          <div className="rounded-2xl border border-slate-300 bg-slate-900 text-white p-5 space-y-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-400/20 text-amber-300 border border-amber-400/30 flex items-center justify-center shrink-0">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm text-white">
+                    ۲. لینک مخفی و اختصاصی ورود مدیریت / کادر
+                  </h4>
+                  <p className="text-[11px] text-slate-300">
+                    این آدرس در هیچ صفحه‌ای نمایش داده نمی‌شود و فقط در اختیار مدیران است
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="font-bold text-slate-200">
+                  مسیر مخفی ورود مدیریت (Slug انگلیسی):
+                </label>
+                <button
+                  type="button"
+                  onClick={generateRandomAdminSlug}
+                  className="inline-flex items-center gap-1 text-[11px] text-amber-300 hover:text-amber-200 font-bold cursor-pointer"
+                >
+                  <Wand2 className="w-3.5 h-3.5" />
+                  <span>تولید آدرس تصادفی امن</span>
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5 dir-ltr">
+                <span className="px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 font-mono text-[11px] shrink-0">
+                  /
+                </span>
+                <input
+                  type="text"
+                  required
+                  value={adminLoginSlug}
+                  onChange={(e) => setAdminLoginSlug(e.target.value)}
+                  placeholder="admin-portal"
+                  className="flex-1 px-3 py-2 rounded-xl border border-slate-700 bg-slate-950 outline-none focus:ring-2 focus:ring-amber-400 font-mono text-left text-xs font-bold text-amber-200"
+                />
+              </div>
+            </div>
+
+            <div className="bg-slate-950/80 border border-slate-700 rounded-xl p-2.5 space-y-2">
+              <div className="font-mono text-[11px] text-amber-200 dir-ltr text-left break-all select-all">
+                {adminPortalUrl}
+              </div>
+              {customDomainOrigin && (
+                <div className="font-mono text-[10px] text-slate-400 dir-ltr text-left break-all border-t border-slate-800 pt-1.5">
+                  دامنه اصلی: {`${customDomainOrigin}/${effectiveAdminSlug}`}
+                </div>
+              )}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleCopyAccessUrl(
+                      'admin',
+                      customDomainOrigin
+                        ? `${customDomainOrigin}/${effectiveAdminSlug}`
+                        : adminPortalUrl
+                    )
+                  }
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-xl transition cursor-pointer"
+                >
+                  {copiedLinkKey === 'admin' ? (
+                    <CheckCircle className="w-3.5 h-3.5" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
+                  <span>{copiedLinkKey === 'admin' ? 'کپی شد!' : 'کپی لینک مخفی مدیریت'}</span>
+                </button>
+                <a
+                  href={`/${effectiveAdminSlug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl border border-slate-600 transition"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>مشاهده</span>
+                </a>
+              </div>
+            </div>
+
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-800/80 border border-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={hideAdminLoginButton}
+                onChange={(e) => setHideAdminLoginButton(e.target.checked)}
+                className="mt-0.5 rounded text-amber-400 focus:ring-amber-400"
+              />
+              <span className="text-[11px] text-slate-200 leading-relaxed">
+                <strong className="text-amber-300 inline-flex items-center gap-1 ml-1">
+                  <EyeOff className="w-3.5 h-3.5" />
+                  مخفی‌سازی کامل دکمه ورود مدیریت
+                </strong>
+                از هدر صفحه اصلی، صفحه ورود مددجو و پروفایل مددجویان (ورود کادر فقط از طریق لینک مخفی بالا امکان‌پذیر باشد)
+              </span>
+            </label>
+          </div>
+        </div>
+
+        {/* 3. Public Request Form Link Compact Row */}
+        <div className="bg-emerald-950 text-white rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <span className="font-bold text-xs text-amber-300 block">
+              ۳. لینک مستقل فرم درخواست عمومی مراجعین (بدون منو و دکمه ورود):
+            </span>
+            <span className="font-mono text-xs text-emerald-200 dir-ltr block truncate select-all">
+              {publicFormUrl}
+            </span>
+          </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={handleCopyFormUrl}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-xl text-xs shadow transition cursor-pointer"
+              onClick={() => handleCopyAccessUrl('form', publicFormUrl)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-xl text-xs transition cursor-pointer"
             >
-              {copiedFormUrl ? <CheckCircle className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span>{copiedFormUrl ? 'کپی شد!' : 'کپی لینک فرم'}</span>
+              {copiedLinkKey === 'form' ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedLinkKey === 'form' ? 'کپی شد!' : 'کپی لینک فرم'}</span>
             </button>
             <a
               href="/form"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-800/80 hover:bg-emerald-700 text-white font-semibold rounded-xl text-xs border border-emerald-600/60 transition"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold rounded-xl text-xs border border-emerald-600/60 transition"
             >
-              <ExternalLink className="w-4 h-4" />
+              <ExternalLink className="w-3.5 h-3.5" />
               <span>مشاهده</span>
             </a>
           </div>
         </div>
-
-        <div className="bg-emerald-950/70 border border-emerald-700/50 rounded-xl px-3.5 py-2.5 font-mono text-xs text-emerald-200 dir-ltr text-left select-all overflow-x-auto">
-          {publicFormUrl}
-        </div>
-      </div>
+      </form>
 
       {/* Identity & Visual Branding */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
@@ -811,13 +1098,32 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         </div>
       </div>
 
-      {/* Public Form Fields & Select Options Builder */}
-      <PublicFormBuilderSection
-        config={config}
-        entities={entities}
-        onConfigUpdated={onConfigUpdated}
-        onOpenEntitiesTab={onOpenFormBuilder}
-      />
+      {/* Shortcut Card: Public Form Customization moved to Form Builder */}
+      {onOpenFormBuilder && (
+        <div className="bg-emerald-50/70 rounded-2xl border border-emerald-200 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+              <ClipboardList className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="font-bold text-sm text-emerald-950">
+                شخصی‌سازی فرم درخواست عمومی مراجعین به بخش «فرم‌ساز» منتقل شده است
+              </h4>
+              <p className="text-xs text-emerald-800/80 mt-0.5">
+                فرم درخواست عمومی به عنوان فرم از پیش ثبت‌شده در بالای لیست فرم‌ساز قابل ویرایش و الگوبرداری است.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenFormBuilder}
+            className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer shrink-0"
+          >
+            <ClipboardList className="w-4 h-4" />
+            <span>ورود به بخش فرم‌ساز</span>
+          </button>
+        </div>
+      )}
 
       {/* Dynamic Categories Management */}
       {catError && (

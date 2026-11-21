@@ -18,6 +18,9 @@ export interface AppConfig {
   loginShowBackLink?: boolean;
   appDomain?: string;
   publicFormConfig?: string;
+  adminLoginSlug?: string;
+  beneficiaryLoginSlug?: string;
+  hideAdminLoginButton?: boolean;
 }
 
 export interface Category {

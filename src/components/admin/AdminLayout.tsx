@@ -358,8 +358,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {activeTab === 'forms' && canSettings && (
           <FormsTab
+            config={config}
+            needCategories={needCategories}
             entities={entities}
             onRefreshEntities={onRefreshEntities}
+            onConfigUpdated={onConfigUpdated}
           />
         )}
 

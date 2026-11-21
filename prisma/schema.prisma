@@ -25,9 +25,12 @@ model AppConfig {
   loginAllowPassword Boolean  @default(true)
   loginAllowOtp      Boolean  @default(true)
   loginShowBackLink  Boolean  @default(true)
-  appDomain          String   @default("")
-  publicFormConfig   String   @default("")
-  updatedAt          DateTime @updatedAt
+  appDomain            String   @default("")
+  publicFormConfig     String   @default("")
+  adminLoginSlug       String   @default("admin-portal")
+  beneficiaryLoginSlug String   @default("beneficiary")
+  hideAdminLoginButton Boolean  @default(true)
+  updatedAt            DateTime @updatedAt
 }
 
 model NeedCategory {

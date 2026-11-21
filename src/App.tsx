@@ -41,10 +41,14 @@ export default function App() {
       window.location.pathname === '/public-form' ||
       new URLSearchParams(window.location.search).get('mode') === 'form');
 
-  const isBeneficiaryRoute =
+  const rawPathSlug =
+    typeof window !== 'undefined'
+      ? window.location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase()
+      : '';
+
+  const isLegacyBeneficiaryRoute =
     typeof window !== 'undefined' &&
-    (window.location.pathname === '/beneficiary' ||
-      window.location.pathname === '/beneficiary/' ||
+    (rawPathSlug === 'beneficiary' ||
       new URLSearchParams(window.location.search).get('portal') === 'beneficiary');
 
   const isStandalonePage = isStandaloneRequestForm || Boolean(customFormSlug);
@@ -56,8 +60,13 @@ export default function App() {
   const [requests, setRequests] = useState<BeneficiaryRequest[]>([]);
   const [programs, setPrograms] = useState<Program[]>([]);
 
+  const [isBeneficiaryEntryRoute, setIsBeneficiaryEntryRoute] = useState<boolean>(
+    isLegacyBeneficiaryRoute
+  );
+  const [isAdminEntryRoute, setIsAdminEntryRoute] = useState<boolean>(false);
+
   const [activeView, setActiveView] = useState<AppView>(
-    isBeneficiaryRoute ? 'beneficiary-login' : 'public'
+    isLegacyBeneficiaryRoute ? 'beneficiary-login' : 'public'
   );
   const [currentUser, setCurrentUser] = useState<StaffUser | null>(null);
   const [currentBeneficiary, setCurrentBeneficiary] = useState<BeneficiaryAccount | null>(null);
@@ -147,27 +156,59 @@ export default function App() {
         setEntities(Array.isArray(ents) ? ents : []);
 
         if (!isStandalonePage) {
-          const token = localStorage.getItem('OM_CHARITY_AUTH_TOKEN');
-          let savedView = sessionStorage.getItem(ACTIVE_VIEW_STORAGE_KEY);
-          if (token) {
+          const configuredBeneficiarySlug = (conf?.beneficiaryLoginSlug || 'beneficiary')
+            .trim()
+            .toLowerCase();
+          const matchedBeneficiaryRoute =
+            isLegacyBeneficiaryRoute ||
+            (Boolean(rawPathSlug) && rawPathSlug === configuredBeneficiarySlug);
+          setIsBeneficiaryEntryRoute(matchedBeneficiaryRoute);
+
+          let matchedAdminRoute = false;
+          if (
+            !matchedBeneficiaryRoute &&
+            rawPathSlug &&
+            !rawPathSlug.includes('/')
+          ) {
             try {
-              const { user } = await api.getMe(token);
-              setCurrentUser(user);
-              localStorage.setItem('OM_CHARITY_CURRENT_USER', JSON.stringify(user));
-              await loadProtectedData(user);
-              if (!isBeneficiaryRoute && savedView === 'admin') {
-                setActiveView('admin');
-              }
+              const check = await api.checkAdminRoute(rawPathSlug);
+              matchedAdminRoute = Boolean(check?.isAdminRoute);
             } catch {
-              clearAuthSession('public');
-              savedView = null;
+              matchedAdminRoute = false;
             }
-          } else {
-            localStorage.removeItem('OM_CHARITY_CURRENT_USER');
-            if (savedView === 'admin') {
-              sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
-              savedView = null;
+          }
+          setIsAdminEntryRoute(matchedAdminRoute);
+
+          let savedView = sessionStorage.getItem(ACTIVE_VIEW_STORAGE_KEY);
+          let hasValidStaff = false;
+
+          if (!matchedBeneficiaryRoute) {
+            const token = localStorage.getItem('OM_CHARITY_AUTH_TOKEN');
+            if (token) {
+              try {
+                const { user } = await api.getMe(token);
+                hasValidStaff = true;
+                setCurrentUser(user);
+                localStorage.setItem('OM_CHARITY_CURRENT_USER', JSON.stringify(user));
+                await loadProtectedData(user);
+                if (matchedAdminRoute || savedView === 'admin') {
+                  setActiveView('admin');
+                }
+              } catch {
+                clearAuthSession(matchedAdminRoute ? 'login' : 'public');
+                savedView = null;
+              }
+            } else {
+              localStorage.removeItem('OM_CHARITY_CURRENT_USER');
+              if (savedView === 'admin') {
+                sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
+                savedView = null;
+              }
             }
+          }
+
+          if (matchedAdminRoute && !hasValidStaff) {
+            setActiveView('login');
           }
 
           const bToken = localStorage.getItem(BENEFICIARY_TOKEN_KEY);
@@ -175,13 +216,13 @@ export default function App() {
             try {
               const { beneficiary } = await api.getBeneficiaryMe(bToken);
               setCurrentBeneficiary(beneficiary);
-              if (isBeneficiaryRoute || savedView === 'beneficiary-portal') {
+              if (matchedBeneficiaryRoute || (!matchedAdminRoute && savedView === 'beneficiary-portal')) {
                 setActiveView('beneficiary-portal');
               }
             } catch {
-              clearBeneficiarySession(isBeneficiaryRoute ? 'beneficiary-login' : undefined);
+              clearBeneficiarySession(matchedBeneficiaryRoute ? 'beneficiary-login' : undefined);
             }
-          } else if (isBeneficiaryRoute) {
+          } else if (matchedBeneficiaryRoute) {
             setActiveView('beneficiary-login');
           }
         }
@@ -193,10 +234,20 @@ export default function App() {
     };
 
     initApp();
-  }, [isStandalonePage, isBeneficiaryRoute, loadProtectedData, clearAuthSession, clearBeneficiarySession]);
+  }, [
+    isStandalonePage,
+    isLegacyBeneficiaryRoute,
+    rawPathSlug,
+    loadProtectedData,
+    clearAuthSession,
+    clearBeneficiarySession,
+  ]);
 
   const navigateTo = (view: AppView) => {
     if (isStandalonePage) return;
+    if (isBeneficiaryEntryRoute && view !== 'beneficiary-login' && view !== 'beneficiary-portal') {
+      return;
+    }
     if (view === 'admin' && !currentUser) {
       setActiveView('login');
       sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
@@ -222,11 +273,15 @@ export default function App() {
     setCurrentUser(user);
     setActiveView('admin');
     sessionStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, 'admin');
-    await loadProtectedData(user);
+    const [freshConfig] = await Promise.all([
+      api.getConfig().catch(() => null),
+      loadProtectedData(user),
+    ]);
+    if (freshConfig) setConfig(freshConfig);
   };
 
   const handleLogout = () => {
-    clearAuthSession('public');
+    clearAuthSession(isAdminEntryRoute ? 'login' : 'public');
   };
 
   const handleBeneficiaryLoginSuccess = (beneficiary: BeneficiaryAccount, token: string) => {
@@ -238,7 +293,7 @@ export default function App() {
   };
 
   const handleBeneficiaryLogout = () => {
-    clearBeneficiarySession('public');
+    clearBeneficiarySession(isBeneficiaryEntryRoute ? 'beneficiary-login' : 'public');
     sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
   };
 
@@ -286,10 +341,21 @@ export default function App() {
       {/* Header */}
       <Header
         config={config}
-        currentUser={isStandalonePage ? null : currentUser}
+        currentUser={isStandalonePage || isBeneficiaryEntryRoute ? null : currentUser}
         currentBeneficiary={isStandalonePage ? null : currentBeneficiary}
         activeView={isStandalonePage ? 'public' : activeView}
         standalone={isStandalonePage}
+        beneficiaryOnly={
+          isBeneficiaryEntryRoute ||
+          activeView === 'beneficiary-login' ||
+          activeView === 'beneficiary-portal'
+        }
+        hideAdminLogin={
+          config?.hideAdminLoginButton !== false ||
+          isBeneficiaryEntryRoute ||
+          activeView === 'beneficiary-login' ||
+          activeView === 'beneficiary-portal'
+        }
         onNavigate={navigateTo}
         onLogout={handleLogout}
         onBeneficiaryLogout={handleBeneficiaryLogout}
@@ -332,6 +398,7 @@ export default function App() {
                 config={config}
                 onLoginSuccess={handleBeneficiaryLoginSuccess}
                 onBackToPublic={() => navigateTo('public')}
+                isolated={isBeneficiaryEntryRoute}
               />
             )}
 
@@ -342,6 +409,7 @@ export default function App() {
                 entities={entities}
                 onLogout={handleBeneficiaryLogout}
                 onBackToPublic={() => navigateTo('public')}
+                isolated={isBeneficiaryEntryRoute}
               />
             )}
 

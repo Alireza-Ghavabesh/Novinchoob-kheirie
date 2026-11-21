@@ -21,26 +21,41 @@ import {
   MessageSquare,
   HardDrive,
   FileText,
+  Sparkles,
+  ArrowRight,
+  Star,
 } from 'lucide-react';
-import { CustomForm, CustomFormSubmission, CustomFormSubmissionStatus } from '../../types';
+import {
+  AppConfig,
+  Category,
+  CustomForm,
+  CustomFormSubmission,
+  CustomFormSubmissionStatus,
+} from '../../types';
 import {
   CUSTOM_FORM_STATUS_LABELS,
   CustomFormField,
   CustomFormSmsRule,
   EntityDefinition,
+  createPublicRequestFormTemplateFields,
   formatBytesCompact,
   formatEntityRowSummary,
   parseCustomFormSmsRules,
+  parsePublicFormSchema,
 } from '../../utils/publicFormConfig';
 import { api } from '../../services/api';
 import { toPersianDigits } from '../../utils/persian';
 import { EntitiesManagerSection } from './EntitiesManagerSection';
 import { FormFieldsEditor } from './FormFieldsEditor';
 import { FormSmsRulesSection } from './FormSmsRulesSection';
+import { PublicFormBuilderSection } from './PublicFormBuilderSection';
 
 interface FormsTabProps {
+  config: AppConfig | null;
+  needCategories: Category[];
   entities: EntityDefinition[];
   onRefreshEntities: () => void;
+  onConfigUpdated: (config: AppConfig) => void;
 }
 
 const THEME_OPTIONS = [
@@ -51,8 +66,16 @@ const THEME_OPTIONS = [
   { id: 'slate', label: 'ذغالی رسمی', swatch: 'bg-slate-800' },
 ];
 
-export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities }) => {
+export const FormsTab: React.FC<FormsTabProps> = ({
+  config,
+  needCategories,
+  entities,
+  onRefreshEntities,
+  onConfigUpdated,
+}) => {
   const [subTab, setSubTab] = useState<'forms' | 'entities'>('forms');
+  const [editingPublicForm, setEditingPublicForm] = useState(false);
+  const [copiedPublicForm, setCopiedPublicForm] = useState(false);
   const [forms, setForms] = useState<CustomForm[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
@@ -126,6 +149,37 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
   const openCreateForm = () => {
     resetEditor();
     setShowEditor(true);
+  };
+
+  const openCreateFromPublicTemplate = () => {
+    resetEditor();
+    const publicSchema = parsePublicFormSchema(config?.publicFormConfig);
+    setTitle(`کپی از ${publicSchema.title}`);
+    setDescription(publicSchema.description);
+    setHeroBadge(publicSchema.heroBadge || 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ');
+    setSubmitButtonText(publicSchema.submitButtonText || 'ثبت نهایی و دریافت کد رهگیری');
+    setSuccessMessage(publicSchema.successMessage || 'درخواست شما با موفقیت در سیستم ثبت گردید.');
+    setMaxFileSizeMB(publicSchema.maxFileSizeMB || 5);
+    setFields(createPublicRequestFormTemplateFields(needCategories.map((c) => c.name)));
+    setShowEditor(true);
+  };
+
+  const applyPublicTemplateToCurrentEditor = () => {
+    if (
+      fields.length > 0 &&
+      !confirm('فیلدهای الگوی کامل فرم درخواست عمومی به انتهای فیلدهای فعلی اضافه شوند؟')
+    ) {
+      return;
+    }
+    const tpl = createPublicRequestFormTemplateFields(needCategories.map((c) => c.name));
+    setFields((prev) => [...prev, ...tpl]);
+  };
+
+  const copyPublicFormUrl = () => {
+    const url = `${window.location.origin}/form`;
+    navigator.clipboard.writeText(url);
+    setCopiedPublicForm(true);
+    setTimeout(() => setCopiedPublicForm(false), 2500);
   };
 
   const openEditForm = (f: CustomForm) => {
@@ -322,7 +376,10 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
         <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
           <button
             type="button"
-            onClick={() => setSubTab('forms')}
+            onClick={() => {
+              setSubTab('forms');
+              setEditingPublicForm(false);
+            }}
             className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
               subTab === 'forms'
                 ? 'bg-white text-emerald-800 shadow-sm'
@@ -335,7 +392,10 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
 
           <button
             type="button"
-            onClick={() => setSubTab('entities')}
+            onClick={() => {
+              setSubTab('entities');
+              setEditingPublicForm(false);
+            }}
             className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
               subTab === 'entities'
                 ? 'bg-white text-emerald-800 shadow-sm'
@@ -347,15 +407,25 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
           </button>
         </div>
 
-        {subTab === 'forms' && (
-          <button
-            type="button"
-            onClick={openCreateForm}
-            className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>ایجاد فرم و صفحه جدید</span>
-          </button>
+        {subTab === 'forms' && !editingPublicForm && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={openCreateFromPublicTemplate}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold rounded-xl transition cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4 text-amber-600" />
+              <span>ساخت از الگوی فرم عمومی</span>
+            </button>
+            <button
+              type="button"
+              onClick={openCreateForm}
+              className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>ایجاد فرم و صفحه جدید</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -378,32 +448,194 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
           entities={entities}
           onRefreshEntities={onRefreshEntities}
         />
-      ) : loading ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-xs text-slate-500">
-          در حال بارگذاری فرم‌ها...
-        </div>
-      ) : forms.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-10 text-center space-y-3">
-          <ClipboardList className="w-10 h-10 text-slate-300 mx-auto" />
-          <h4 className="font-bold text-sm text-slate-800">هنوز فرم اختصاصی نساخته‌اید</h4>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
-            در این بخش می‌توانید صفحات جدید با فیلدهای دلخواه (متنی، عددی، سلکت‌باکس، موجودیتی مثل افراد تحت تکفل و سلکت‌باکس از موجودیت‌ها) بسازید و لینک مستقیم آن را مثل فرم درخواست کمک برای دیگران ارسال کنید.
-          </p>
-          <button
-            type="button"
-            onClick={openCreateForm}
-            className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>ساخت اولین فرم</span>
-          </button>
+      ) : editingPublicForm ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-emerald-950 text-white rounded-2xl p-4 shadow-sm border border-emerald-800">
+            <div className="flex items-center gap-2.5">
+              <Star className="w-5 h-5 text-amber-400 shrink-0" />
+              <div>
+                <h3 className="font-bold text-sm">
+                  ویرایش و شخصی‌سازی فرم درخواست عمومی مراجعین (فرم از پیش ثبت‌شده)
+                </h3>
+                <p className="text-[11px] text-emerald-200">
+                  تغییرات شما مستقیماً در فرم عمومی سامانه (/form) و صفحه پذیرش نیازمندان اعمال می‌شود.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEditingPublicForm(false)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition cursor-pointer"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>بازگشت به لیست فرم‌ها</span>
+            </button>
+          </div>
+
+          <PublicFormBuilderSection
+            config={config}
+            entities={entities}
+            onConfigUpdated={onConfigUpdated}
+            onOpenEntitiesTab={() => {
+              setEditingPublicForm(false);
+              setSubTab('entities');
+            }}
+          />
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {forms.map((f) => {
-            const sharePath = `/forms/${f.slug}`;
-            const fullUrl =
-              typeof window !== 'undefined' ? `${window.location.origin}${sharePath}` : sharePath;
+        <div className="space-y-6">
+          {/* Pinned Pre-Registered System Form: Public Charity Request Form */}
+          {(() => {
+            const publicSchema = parsePublicFormSchema(config?.publicFormConfig);
+            const publicFormUrl =
+              typeof window !== 'undefined' ? `${window.location.origin}/form` : '/form';
+            const activeBuiltinCount = [
+              true, // name
+              true, // nid
+              true, // phone
+              true, // cat
+              publicSchema.builtin.showBirthDate,
+              publicSchema.builtin.showGuardian,
+              publicSchema.builtin.showDependents,
+              publicSchema.builtin.showHousing,
+              publicSchema.builtin.showRequestedAmount,
+              publicSchema.builtin.showDesc,
+              publicSchema.builtin.showAddress,
+            ].filter(Boolean).length;
+            const customCount = (publicSchema.customFields || []).filter((f) => f.enabled !== false).length;
+
+            return (
+              <div className="bg-gradient-to-l from-emerald-50/90 via-white to-amber-50/50 rounded-2xl border-2 border-emerald-300 shadow-sm p-5 sm:p-6 space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 border-b border-emerald-200/70 pb-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-700 text-white text-[10px] font-bold">
+                        <Star className="w-3 h-3 text-amber-300" />
+                        فرم از پیش ثبت‌شده سامانه
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                        فعال • متصل به کارتابل متقاضیان
+                      </span>
+                    </div>
+                    <h4 className="font-extrabold text-base sm:text-lg text-slate-900">
+                      {publicSchema.title}
+                    </h4>
+                    <p className="text-xs text-slate-600 leading-relaxed max-w-2xl">
+                      {publicSchema.description}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setEditingPublicForm(true)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                      <span>ویرایش و شخصی‌سازی فرم عمومی</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openCreateFromPublicTemplate}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-white hover:bg-amber-50 text-slate-800 border border-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
+                    >
+                      <Sparkles className="w-4 h-4 text-amber-600" />
+                      <span>ساخت فرم جدید مشابه این فرم</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-center">
+                  <div className="lg:col-span-2 bg-white border border-emerald-200 rounded-xl p-2.5 flex items-center justify-between gap-2">
+                    <span className="font-mono text-[11px] text-slate-700 dir-ltr truncate select-all">
+                      {publicFormUrl}
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={copyPublicFormUrl}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                          copiedPublicForm
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-amber-400 hover:bg-amber-300 text-slate-900'
+                        }`}
+                      >
+                        {copiedPublicForm ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedPublicForm ? 'کپی شد' : 'کپی لینک'}</span>
+                      </button>
+                      <a
+                        href="/form"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-[11px] font-semibold transition"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>مشاهده</span>
+                      </a>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600 lg:justify-end">
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-semibold">
+                      فیلدهای اصلی: {toPersianDigits(activeBuiltinCount)}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-semibold">
+                      فیلدهای سفارشی: {toPersianDigits(customCount)}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-semibold">
+                      سقف فایل: {toPersianDigits(publicSchema.maxFileSizeMB || 5)} مگابایت
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Custom Forms List */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-sm text-slate-800 flex items-center gap-2">
+                <ClipboardList className="w-4 h-4 text-emerald-600" />
+                <span>فرم‌ها و صفحات اختصاصی ساخته‌شده ({toPersianDigits(forms.length)})</span>
+              </h4>
+            </div>
+
+            {loading ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-xs text-slate-500">
+                در حال بارگذاری فرم‌ها...
+              </div>
+            ) : forms.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-10 text-center space-y-3">
+                <ClipboardList className="w-10 h-10 text-slate-300 mx-auto" />
+                <h4 className="font-bold text-sm text-slate-800">هنوز فرم اختصاصی جدیدی نساخته‌اید</h4>
+                <p className="text-xs text-slate-500 max-w-lg mx-auto leading-relaxed">
+                  در این بخش می‌توانید فرم‌هایی دقیقاً با قدرت و چیدمان فرم درخواست عمومی (شامل تیتر بخش‌ها، کد ملی، تاریخ شمسی، مبلغ به تومان، چیدمان ۲ ستونه، آپلود مدارک، موجودیت‌ها و قوانین پیامک) بسازید و در پروفایل مددجو یا لینک مستقل منتشر کنید.
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={openCreateFromPublicTemplate}
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold rounded-xl shadow transition cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>ساخت با الگوی آماده فرم درخواست عمومی</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openCreateForm}
+                    className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>ساخت فرم خالی</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {forms.map((f) => {
+                  const sharePath = `/forms/${f.slug}`;
+                  const fullUrl =
+                    typeof window !== 'undefined' ? `${window.location.origin}${sharePath}` : sharePath;
 
             return (
               <div
@@ -533,9 +765,12 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                     <span>پاسخ‌ها ({toPersianDigits(f.submissionsCount || 0)})</span>
                   </button>
                 </div>
+                  </div>
+                );
+              })}
               </div>
-            );
-          })}
+            )}
+          </div>
         </div>
       )}
 
@@ -721,9 +956,19 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
 
               {/* Fields Designer */}
               <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50/40 space-y-3">
-                <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
-                  ۲. طراحی فیلدهای فرم (متنی، عددی، موبایل، فایل مدارک، سلکت‌باکس و موجودیتی)
-                </h4>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                    ۲. طراحی فیلدهای فرم (بخش‌بندی، کد ملی، تاریخ، مبلغ، موبایل، فایل، سلکت‌باکس و موجودیتی)
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={applyPublicTemplateToCurrentEditor}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold transition cursor-pointer shrink-0"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                    <span>افزودن الگوی کامل فرم درخواست عمومی</span>
+                  </button>
+                </div>
                 <FormFieldsEditor
                   fields={fields}
                   entities={entities}
@@ -732,7 +977,7 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                     setShowEditor(false);
                     setSubTab('entities');
                   }}
-                  emptyText="هنوز فیلدی برای این فرم اضافه نشده است. از فرم بالا فیلدهای مورد نظر خود را اضافه کنید."
+                  emptyText="هنوز فیلدی برای این فرم اضافه نشده است. از فرم بالا فیلدهای مورد نظر خود را اضافه کنید یا روی «افزودن الگوی کامل فرم درخواست عمومی» کلیک نمایید."
                 />
               </div>
 

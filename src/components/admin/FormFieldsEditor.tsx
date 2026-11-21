@@ -8,6 +8,11 @@ import {
   AlertTriangle,
   Upload,
   Smartphone,
+  Copy,
+  Heading2,
+  CreditCard,
+  Calendar,
+  Banknote,
 } from 'lucide-react';
 import {
   CustomFieldType,
@@ -34,6 +39,8 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
   const [newFieldLabel, setNewFieldLabel] = useState('');
   const [newFieldType, setNewFieldType] = useState<CustomFieldType>('text');
   const [newFieldPlaceholder, setNewFieldPlaceholder] = useState('');
+  const [newFieldHelpText, setNewFieldHelpText] = useState('');
+  const [newFieldWidth, setNewFieldWidth] = useState<'half' | 'full'>('half');
   const [newFieldRequired, setNewFieldRequired] = useState(false);
   const [newFieldOptions, setNewFieldOptions] = useState<string[]>([]);
   const [newFieldOptInput, setNewFieldOptInput] = useState('');
@@ -70,12 +77,15 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
       return;
     }
 
+    const forceFull = newFieldType === 'section' || newFieldType === 'entity_list';
     const field: CustomFormField = {
       id: `cf_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`,
       label,
       type: newFieldType,
-      placeholder: newFieldPlaceholder.trim(),
-      required: newFieldRequired,
+      placeholder: newFieldType === 'section' ? '' : newFieldPlaceholder.trim(),
+      helpText: newFieldHelpText.trim(),
+      width: forceFull ? 'full' : newFieldWidth,
+      required: newFieldType === 'section' ? false : newFieldRequired,
       options: newFieldType === 'select' ? [...newFieldOptions] : [],
       multiple:
         newFieldType === 'select' || newFieldType === 'entity_select'
@@ -94,6 +104,8 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
     setNewFieldLabel('');
     setNewFieldType('text');
     setNewFieldPlaceholder('');
+    setNewFieldHelpText('');
+    setNewFieldWidth('half');
     setNewFieldRequired(false);
     setNewFieldOptions([]);
     setNewFieldOptInput('');
@@ -102,6 +114,19 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
 
   const updateField = (id: string, patch: Partial<CustomFormField>) => {
     onChange(fields.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  };
+
+  const duplicateField = (idx: number) => {
+    const src = fields[idx];
+    if (!src) return;
+    const copy: CustomFormField = {
+      ...JSON.parse(JSON.stringify(src)),
+      id: `cf_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`,
+      label: `${src.label} (کپی)`,
+    };
+    const next = [...fields];
+    next.splice(idx + 1, 0, copy);
+    onChange(next);
   };
 
   const deleteField = (id: string) => {
@@ -177,6 +202,17 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
                 const nextType = e.target.value as CustomFieldType;
                 setNewFieldType(nextType);
                 if (
+                  nextType === 'section' ||
+                  nextType === 'textarea' ||
+                  nextType === 'file' ||
+                  nextType === 'checkbox' ||
+                  nextType === 'entity_list'
+                ) {
+                  setNewFieldWidth('full');
+                } else {
+                  setNewFieldWidth('half');
+                }
+                if (
                   (nextType === 'entity_list' || nextType === 'entity_select') &&
                   !newFieldLabel.trim() &&
                   entities[0]
@@ -195,6 +231,7 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
           </div>
 
           {newFieldType !== 'checkbox' &&
+            newFieldType !== 'section' &&
             newFieldType !== 'entity_list' &&
             newFieldType !== 'entity_select' && (
               <div>
@@ -210,6 +247,12 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
                       ? 'مثال: تصویر شناسنامه یا مدارک خود را بارگذاری نمایید'
                       : newFieldType === 'phone'
                       ? 'مثال: 09123456789'
+                      : newFieldType === 'national_id'
+                      ? 'مثال: 0012345678'
+                      : newFieldType === 'date'
+                      ? 'مثال: 1365/05/12'
+                      : newFieldType === 'currency'
+                      ? 'مثال: 5000000'
                       : 'مثال: انتخاب یا وارد کنید...'
                   }
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
@@ -346,16 +389,60 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
           </div>
         )}
 
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-          <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
+        {/* Width & Helper Text row */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {newFieldType !== 'section' && newFieldType !== 'entity_list' && (
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">چیدمان / عرض در فرم</label>
+              <select
+                value={newFieldWidth}
+                onChange={(e) => setNewFieldWidth(e.target.value as 'half' | 'full')}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="half">نیم‌عرض (۲ ستونه کنار هم)</option>
+                <option value="full">تمام‌عرض (یک سطر کامل)</option>
+              </select>
+            </div>
+          )}
+
+          <div
+            className={
+              newFieldType === 'section' || newFieldType === 'entity_list'
+                ? 'sm:col-span-3'
+                : 'sm:col-span-2'
+            }
+          >
+            <label className="block font-semibold text-slate-700 mb-1">
+              {newFieldType === 'section'
+                ? 'توضیح زیر تیتر بخش (اختیاری)'
+                : 'توضیح راهنمای زیر فیلد (اختیاری)'}
+            </label>
             <input
-              type="checkbox"
-              checked={newFieldRequired}
-              onChange={(e) => setNewFieldRequired(e.target.checked)}
-              className="rounded text-emerald-600 focus:ring-emerald-500"
+              type="text"
+              value={newFieldHelpText}
+              onChange={(e) => setNewFieldHelpText(e.target.value)}
+              placeholder="مثال: اطلاعات این بخش صرفاً جهت بررسی مددکار است..."
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
             />
-            <span>پر کردن این فیلد در فرم اجباری باشد</span>
-          </label>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+          {newFieldType !== 'section' ? (
+            <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
+              <input
+                type="checkbox"
+                checked={newFieldRequired}
+                onChange={(e) => setNewFieldRequired(e.target.checked)}
+                className="rounded text-emerald-600 focus:ring-emerald-500"
+              />
+              <span>پر کردن این فیلد در فرم اجباری باشد</span>
+            </label>
+          ) : (
+            <span className="text-[11px] text-emerald-700 font-semibold">
+              تیتر بخش برای دسته‌بندی ظاهری فیلدها (مشابه فرم درخواست عمومی) نمایش داده می‌شود.
+            </span>
+          )}
 
           <button
             type="button"
@@ -388,20 +475,30 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
                   <div className="flex items-center gap-2 flex-wrap">
                     <span
                       className={`px-2 py-0.5 rounded-md font-semibold text-[11px] inline-flex items-center gap-1 ${
-                        field.type === 'entity_list' || field.type === 'entity_select'
+                        field.type === 'section'
+                          ? 'bg-slate-900 text-amber-300'
+                          : field.type === 'entity_list' || field.type === 'entity_select'
                           ? 'bg-emerald-100 text-emerald-800'
                           : field.type === 'file'
                           ? 'bg-indigo-100 text-indigo-800'
                           : field.type === 'phone'
                           ? 'bg-amber-100 text-amber-800'
+                          : field.type === 'currency'
+                          ? 'bg-teal-100 text-teal-800'
+                          : field.type === 'national_id' || field.type === 'date'
+                          ? 'bg-sky-100 text-sky-800'
                           : 'bg-slate-100 text-slate-700'
                       }`}
                     >
+                      {field.type === 'section' && <Heading2 className="w-3 h-3" />}
                       {(field.type === 'entity_list' || field.type === 'entity_select') && (
                         <Layers className="w-3 h-3" />
                       )}
                       {field.type === 'file' && <Upload className="w-3 h-3" />}
                       {field.type === 'phone' && <Smartphone className="w-3 h-3" />}
+                      {field.type === 'national_id' && <CreditCard className="w-3 h-3" />}
+                      {field.type === 'date' && <Calendar className="w-3 h-3" />}
+                      {field.type === 'currency' && <Banknote className="w-3 h-3" />}
                       {FIELD_TYPE_LABELS[field.type]}
                     </span>
                     <input
@@ -413,6 +510,27 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1.5 flex-wrap">
+                    {field.type !== 'section' && field.type !== 'entity_list' && (
+                      <select
+                        value={
+                          field.width ||
+                          (field.type === 'textarea' ||
+                          field.type === 'checkbox' ||
+                          field.type === 'file'
+                            ? 'full'
+                            : 'half')
+                        }
+                        onChange={(e) =>
+                          updateField(field.id, { width: e.target.value as 'half' | 'full' })
+                        }
+                        className="px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-700 outline-none"
+                        title="عرض فیلد در چیدمان فرم"
+                      >
+                        <option value="half">نیم‌عرض</option>
+                        <option value="full">تمام‌عرض</option>
+                      </select>
+                    )}
+
                     {(field.type === 'select' || field.type === 'entity_select') && (
                       <label className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-teal-50 border border-teal-200 cursor-pointer text-[11px] text-teal-900 font-semibold">
                         <input
@@ -427,17 +545,19 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
                       </label>
                     )}
 
-                    <label className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer text-[11px]">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(field.required)}
-                        onChange={(e) =>
-                          updateField(field.id, { required: e.target.checked })
-                        }
-                        className="rounded text-emerald-600"
-                      />
-                      <span>اجباری</span>
-                    </label>
+                    {field.type !== 'section' && (
+                      <label className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer text-[11px]">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(field.required)}
+                          onChange={(e) =>
+                            updateField(field.id, { required: e.target.checked })
+                          }
+                          className="rounded text-emerald-600"
+                        />
+                        <span>اجباری</span>
+                      </label>
+                    )}
 
                     <button
                       type="button"
@@ -453,6 +573,14 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
                       {field.enabled !== false ? 'فعال' : 'مخفی'}
                     </button>
 
+                    <button
+                      type="button"
+                      onClick={() => duplicateField(idx)}
+                      className="p-1 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
+                      title="تکثیر / کپی این فیلد"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
                     <button
                       type="button"
                       disabled={idx === 0}
@@ -522,23 +650,49 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
                   </div>
                 )}
 
-                {field.type !== 'checkbox' &&
-                  field.type !== 'entity_list' &&
-                  field.type !== 'entity_select' &&
-                  field.type !== 'select' && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-slate-500 shrink-0">متن راهنما:</span>
-                      <input
-                        type="text"
-                        value={field.placeholder || ''}
-                        onChange={(e) =>
-                          updateField(field.id, { placeholder: e.target.value })
-                        }
-                        placeholder="متن راهنما داخل فیلد..."
-                        className="flex-1 px-2.5 py-1 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-emerald-500 text-[11px]"
-                      />
-                    </div>
-                  )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {field.type !== 'checkbox' &&
+                    field.type !== 'section' &&
+                    field.type !== 'entity_list' &&
+                    field.type !== 'entity_select' &&
+                    field.type !== 'select' && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-slate-500 shrink-0">Placeholder:</span>
+                        <input
+                          type="text"
+                          value={field.placeholder || ''}
+                          onChange={(e) =>
+                            updateField(field.id, { placeholder: e.target.value })
+                          }
+                          placeholder="متن راهنما داخل فیلد..."
+                          className="flex-1 px-2.5 py-1 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-emerald-500 text-[11px]"
+                        />
+                      </div>
+                    )}
+
+                  <div
+                    className={`flex items-center gap-2 ${
+                      field.type === 'checkbox' ||
+                      field.type === 'section' ||
+                      field.type === 'entity_list' ||
+                      field.type === 'entity_select' ||
+                      field.type === 'select'
+                        ? 'sm:col-span-2'
+                        : ''
+                    }`}
+                  >
+                    <span className="text-[11px] text-slate-500 shrink-0">
+                      {field.type === 'section' ? 'توضیح زیر بخش:' : 'توضیح راهنما:'}
+                    </span>
+                    <input
+                      type="text"
+                      value={field.helpText || ''}
+                      onChange={(e) => updateField(field.id, { helpText: e.target.value })}
+                      placeholder="توضیح اختیاری زیر فیلد..."
+                      className="flex-1 px-2.5 py-1 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-emerald-500 text-[11px]"
+                    />
+                  </div>
+                </div>
 
                 {field.type === 'select' && (
                   <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">

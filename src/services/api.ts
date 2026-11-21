@@ -146,8 +146,17 @@ export const api = {
 
   // Config
   getConfig: async (): Promise<AppConfig> => {
-    const res = await fetch('/api/config');
+    const token = typeof window !== 'undefined' ? localStorage.getItem(AUTH_TOKEN_KEY) : null;
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const res = await fetch('/api/config', { headers });
     return parseJsonOrThrow<AppConfig>(res, 'خطا در دریافت تنظیمات سامانه');
+  },
+  checkAdminRoute: async (slug: string): Promise<{ isAdminRoute: boolean }> => {
+    const res = await fetch(`/api/auth/check-admin-route?slug=${encodeURIComponent(slug)}`);
+    return parseJsonOrThrow<{ isAdminRoute: boolean }>(res, 'خطا در بررسی مسیر');
   },
   updateConfig: async (config: Partial<AppConfig>): Promise<AppConfig> => {
     const res = await authFetch('/api/config', {

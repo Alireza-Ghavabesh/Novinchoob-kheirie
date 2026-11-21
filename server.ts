@@ -160,6 +160,9 @@ async function ensureDatabaseSchema(): Promise<void> {
       { table: 'AppConfig', column: 'loginShowBackLink', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginShowBackLink" BOOLEAN NOT NULL DEFAULT true` },
       { table: 'AppConfig', column: 'appDomain', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "appDomain" TEXT NOT NULL DEFAULT ''` },
       { table: 'AppConfig', column: 'publicFormConfig', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "publicFormConfig" TEXT NOT NULL DEFAULT ''` },
+      { table: 'AppConfig', column: 'adminLoginSlug', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "adminLoginSlug" TEXT NOT NULL DEFAULT 'admin-portal'` },
+      { table: 'AppConfig', column: 'beneficiaryLoginSlug', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "beneficiaryLoginSlug" TEXT NOT NULL DEFAULT 'beneficiary'` },
+      { table: 'AppConfig', column: 'hideAdminLoginButton', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "hideAdminLoginButton" BOOLEAN NOT NULL DEFAULT true` },
       { table: 'SmsConfig', column: 'loginOtpTemplate', ddl: `ALTER TABLE "SmsConfig" ADD COLUMN "loginOtpTemplate" TEXT NOT NULL DEFAULT ''` },
       { table: 'SmsConfig', column: 'loginOtpMessage', ddl: `ALTER TABLE "SmsConfig" ADD COLUMN "loginOtpMessage" TEXT NOT NULL DEFAULT ''` },
       { table: 'User', column: 'phone', ddl: `ALTER TABLE "User" ADD COLUMN "phone" TEXT` },
@@ -630,8 +633,72 @@ app.get('/api/uploads/:filename', (req, res) => {
 
 // --- API Endpoints ---
 
+const RESERVED_ACCESS_SLUGS = new Set([
+  'api',
+  'form',
+  'forms',
+  'public-form',
+  'assets',
+  'src',
+  'uploads',
+  'node_modules',
+  'manifest.json',
+  'sw.js',
+  'favicon.ico',
+]);
+
+function sanitizeAccessSlug(raw: unknown): string {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\/+|\/+$/g, '')
+    .replace(/\s+/g, '-');
+}
+
+function validateAccessSlug(raw: unknown, labelFa: string): { slug?: string; error?: string } {
+  const slug = sanitizeAccessSlug(raw);
+  if (!slug || slug.length < 3 || slug.length > 60) {
+    return { error: `آدرس «${labelFa}» باید بین ۳ تا ۶۰ کاراکتر باشد.` };
+  }
+  if (!/^[a-z0-9][a-z0-9-_]*$/.test(slug)) {
+    return {
+      error: `آدرس «${labelFa}» فقط می‌تواند شامل حروف کوچک انگلیسی، اعداد، خط تیره (-) و زیرخط (_) باشد.`,
+    };
+  }
+  if (RESERVED_ACCESS_SLUGS.has(slug)) {
+    return { error: `آدرس «${slug}» رزرو شده است و نمی‌تواند برای «${labelFa}» استفاده شود.` };
+  }
+  return { slug };
+}
+
+function isStaffRequestAuthorized(req: express.Request): boolean {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) return false;
+  const token = header.slice(7).trim();
+  if (!token) return false;
+  return Boolean(verifyAuthToken(token));
+}
+
+function shapeConfigForResponse(config: any, req: express.Request) {
+  if (!config) return config;
+  if (isStaffRequestAuthorized(req)) {
+    return {
+      ...config,
+      adminLoginSlug: config.adminLoginSlug || 'admin-portal',
+      beneficiaryLoginSlug: config.beneficiaryLoginSlug || 'beneficiary',
+      hideAdminLoginButton: config.hideAdminLoginButton !== false,
+    };
+  }
+  const { adminLoginSlug: _hidden, ...publicSafeConfig } = config;
+  return {
+    ...publicSafeConfig,
+    beneficiaryLoginSlug: config.beneficiaryLoginSlug || 'beneficiary',
+    hideAdminLoginButton: config.hideAdminLoginButton !== false,
+  };
+}
+
 // 1. App Configuration
-app.get('/api/config', async (_req, res) => {
+app.get('/api/config', async (req, res) => {
   try {
     let config = await prisma.appConfig.findUnique({ where: { id: 1 } });
     if (!config) {
@@ -643,19 +710,39 @@ app.get('/api/config', async (_req, res) => {
         },
       });
     }
-    res.json(config);
+    res.json(shapeConfigForResponse(config, req));
   } catch (error: any) {
     if (error?.code === 'P2022' || /no such column/i.test(String(error))) {
       try {
         await ensureDatabaseSchema();
         const config = await prisma.appConfig.findUnique({ where: { id: 1 } });
-        if (config) return res.json(config);
+        if (config) return res.json(shapeConfigForResponse(config, req));
       } catch (retryErr) {
         console.error('GET /api/config auto-heal retry error:', retryErr);
       }
     }
     console.error('GET /api/config error:', error);
     res.status(500).json(formatServerError(error, 'خطا در دریافت تنظیمات سامانه'));
+  }
+});
+
+// Check if a URL path matches the hidden admin login slug (without ever revealing the slug)
+app.get('/api/auth/check-admin-route', async (req, res) => {
+  try {
+    const candidate = sanitizeAccessSlug(req.query.slug);
+    if (!candidate) return res.json({ isAdminRoute: false });
+    const config = await prisma.appConfig.findUnique({
+      where: { id: 1 },
+      select: { adminLoginSlug: true },
+    });
+    const actualSlug = sanitizeAccessSlug(config?.adminLoginSlug || 'admin-portal') || 'admin-portal';
+    const a = Buffer.from(candidate);
+    const b = Buffer.from(actualSlug);
+    const isAdminRoute = a.length === b.length && crypto.timingSafeEqual(a, b);
+    res.json({ isAdminRoute });
+  } catch (error) {
+    console.error('GET /api/auth/check-admin-route error:', error);
+    res.json({ isAdminRoute: false });
   }
 });
 
@@ -680,6 +767,9 @@ app.put('/api/config', requireAuth, requirePerm('manageSettings'), async (req, r
       'loginShowBackLink',
       'appDomain',
       'publicFormConfig',
+      'adminLoginSlug',
+      'beneficiaryLoginSlug',
+      'hideAdminLoginButton',
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
@@ -687,6 +777,40 @@ app.put('/api/config', requireAuth, requirePerm('manageSettings'), async (req, r
         updateData[key] = key === 'appDomain' ? normalizeAppDomain(req.body[key]) : req.body[key];
       }
     }
+
+    if (updateData.adminLoginSlug !== undefined) {
+      const check = validateAccessSlug(updateData.adminLoginSlug, 'لینک اختصاصی ورود مدیریت');
+      if (check.error) {
+        return res.status(400).json({ error: check.error, code: 'INVALID_ADMIN_SLUG' });
+      }
+      updateData.adminLoginSlug = check.slug;
+    }
+
+    if (updateData.beneficiaryLoginSlug !== undefined) {
+      const check = validateAccessSlug(updateData.beneficiaryLoginSlug, 'لینک اختصاصی ورود مددجو');
+      if (check.error) {
+        return res.status(400).json({ error: check.error, code: 'INVALID_BENEFICIARY_SLUG' });
+      }
+      updateData.beneficiaryLoginSlug = check.slug;
+    }
+
+    if (updateData.adminLoginSlug !== undefined || updateData.beneficiaryLoginSlug !== undefined) {
+      const existing = await prisma.appConfig.findUnique({ where: { id: 1 } }).catch(() => null);
+      const nextAdmin = updateData.adminLoginSlug ?? existing?.adminLoginSlug ?? 'admin-portal';
+      const nextBeneficiary =
+        updateData.beneficiaryLoginSlug ?? existing?.beneficiaryLoginSlug ?? 'beneficiary';
+      if (nextAdmin === nextBeneficiary) {
+        return res.status(400).json({
+          error: 'آدرس لینک ورود مدیریت و لینک ورود مددجو نمی‌توانند یکسان باشند.',
+          code: 'DUPLICATE_ACCESS_SLUGS',
+        });
+      }
+    }
+
+    if (updateData.hideAdminLoginButton !== undefined) {
+      updateData.hideAdminLoginButton = Boolean(updateData.hideAdminLoginButton);
+    }
+
     const runUpsert = () =>
       prisma.appConfig.upsert({
         where: { id: 1 },
@@ -701,22 +825,11 @@ app.put('/api/config', requireAuth, requirePerm('manageSettings'), async (req, r
       if (err?.code === 'P2022' || /no such column/i.test(String(err))) {
         await ensureDatabaseSchema();
         config = await runUpsert();
-      } else if (/Unknown argument/i.test(String(err)) && updateData.appDomain !== undefined) {
-        // Fallback when deployed Prisma Client wasn't regenerated yet
-        await ensureDatabaseSchema();
-        const { appDomain: rawDom, ...restData } = updateData;
-        const baseCfg = await prisma.appConfig.upsert({
-          where: { id: 1 },
-          update: restData,
-          create: { id: 1, ...restData },
-        });
-        await prisma.$executeRaw`UPDATE "AppConfig" SET "appDomain" = ${String(rawDom || '')} WHERE "id" = 1`;
-        config = { ...baseCfg, appDomain: String(rawDom || '') };
       } else {
         throw err;
       }
     }
-    res.json(config);
+    res.json(shapeConfigForResponse(config, req));
   } catch (error) {
     console.error('PUT /api/config error:', error);
     res.status(500).json(formatServerError(error, 'خطا در ذخیره تنظیمات سامانه'));

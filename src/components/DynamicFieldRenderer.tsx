@@ -9,6 +9,10 @@ import {
   FileText,
   ExternalLink,
   AlertCircle,
+  Calendar,
+  CreditCard,
+  Banknote,
+  Smartphone,
 } from 'lucide-react';
 import {
   CustomFormField,
@@ -18,7 +22,7 @@ import {
   formatBytesCompact,
   formatEntityRowSummary,
 } from '../utils/publicFormConfig';
-import { toPersianDigits } from '../utils/persian';
+import { toEnglishDigits, toPersianDigits } from '../utils/persian';
 import { api } from '../services/api';
 
 export type DynamicFormValuesMap = Record<string, any>;
@@ -46,6 +50,7 @@ export function validateAndExtractCustomFields(
   const result: SubmittedCustomFieldValue[] = [];
 
   for (const field of activeFields) {
+    if (field.type === 'section') continue;
     const rawVal = values[field.id];
 
     if (field.type === 'file') {
@@ -236,6 +241,46 @@ export function validateAndExtractCustomFields(
           items: formattedRows,
         });
       }
+    } else if (field.type === 'national_id') {
+      const val = toEnglishDigits(String(rawVal ?? '').trim()).replace(/\s+/g, '');
+      if (field.required && !val) {
+        return { error: `لطفاً فیلد «${field.label}» را تکمیل نمایید.`, values: [] };
+      }
+      if (val && !/^\d{10}$/.test(val)) {
+        return {
+          error: `مقدار واردشده برای «${field.label}» باید دقیقاً ۱۰ رقم عددی باشد.`,
+          values: [],
+        };
+      }
+      if (val) {
+        result.push({ id: field.id, label: field.label, type: field.type, value: val });
+      }
+    } else if (field.type === 'phone') {
+      const val = toEnglishDigits(String(rawVal ?? '').trim()).replace(/[\s-]/g, '');
+      if (field.required && !val) {
+        return { error: `لطفاً فیلد «${field.label}» را تکمیل نمایید.`, values: [] };
+      }
+      if (val && !/^\+?\d{10,13}$/.test(val)) {
+        return {
+          error: `شماره تماس واردشده در «${field.label}» معتبر نیست (مانند 09123456789).`,
+          values: [],
+        };
+      }
+      if (val) {
+        result.push({ id: field.id, label: field.label, type: field.type, value: val });
+      }
+    } else if (field.type === 'currency') {
+      const digits = toEnglishDigits(String(rawVal ?? '')).replace(/\D/g, '');
+      if (field.required && !digits) {
+        return { error: `لطفاً مبلغ مربوط به «${field.label}» را وارد نمایید.`, values: [] };
+      }
+      if (digits) {
+        const num = Number(digits);
+        const formatted = Number.isFinite(num)
+          ? `${toPersianDigits(num.toLocaleString('en-US'))} تومان`
+          : digits;
+        result.push({ id: field.id, label: field.label, type: field.type, value: formatted });
+      }
     } else {
       const val = String(rawVal ?? '').trim();
       if (field.required && !val) {
@@ -317,6 +362,8 @@ export function hydrateValuesFromSubmission(
         }
         return rowObj;
       });
+    } else if (field.type === 'currency') {
+      map[field.id] = toEnglishDigits(String(saved.value ?? '')).replace(/\D/g, '');
     } else {
       map[field.id] = String(saved.value ?? '');
     }
@@ -628,13 +675,49 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
           />
         ) : (
           <input
-            type={sub.type === 'number' ? 'number' : sub.type === 'phone' ? 'tel' : 'text'}
-            dir={sub.type === 'phone' ? 'ltr' : undefined}
+            type={
+              sub.type === 'number' || sub.type === 'currency'
+                ? 'number'
+                : sub.type === 'phone'
+                ? 'tel'
+                : 'text'
+            }
+            inputMode={
+              sub.type === 'national_id' || sub.type === 'currency' || sub.type === 'number'
+                ? 'numeric'
+                : sub.type === 'phone'
+                ? 'tel'
+                : undefined
+            }
+            maxLength={sub.type === 'national_id' ? 10 : undefined}
+            dir={
+              sub.type === 'phone' ||
+              sub.type === 'national_id' ||
+              sub.type === 'date' ||
+              sub.type === 'currency'
+                ? 'ltr'
+                : undefined
+            }
             required={Boolean(sub.required)}
-            placeholder={sub.placeholder || (sub.type === 'phone' ? '09123456789' : '')}
+            placeholder={
+              sub.placeholder ||
+              (sub.type === 'phone'
+                ? '09123456789'
+                : sub.type === 'national_id'
+                ? '0012345678'
+                : sub.type === 'date'
+                ? '1365/05/12'
+                : sub.type === 'currency'
+                ? 'مبلغ به تومان'
+                : '')
+            }
             value={String(val ?? '')}
             onChange={(e) => updateSubVal(e.target.value)}
-            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+            className={`w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white ${
+              sub.type === 'phone' || sub.type === 'national_id' || sub.type === 'date'
+                ? 'font-mono text-left'
+                : ''
+            }`}
           />
         )}
       </div>
@@ -644,12 +727,32 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
   return (
     <div className={`grid grid-cols-1 ${compact ? 'gap-3' : 'sm:grid-cols-2 gap-4'}`}>
       {activeFields.map((field) => {
-        const isFullWidth =
-          compact ||
+        if (field.type === 'section') {
+          return (
+            <div
+              key={field.id}
+              className="sm:col-span-2 pt-3 pb-1 border-b-2 border-emerald-600/20 first:pt-0"
+            >
+              <h4 className="text-sm font-extrabold text-emerald-950 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-600 shrink-0" />
+                <span>{field.label}</span>
+              </h4>
+              {field.helpText && (
+                <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">{field.helpText}</p>
+              )}
+            </div>
+          );
+        }
+
+        const defaultFullWidth =
           field.type === 'textarea' ||
           field.type === 'checkbox' ||
           field.type === 'file' ||
           field.type === 'entity_list';
+        const isFullWidth =
+          compact ||
+          field.type === 'entity_list' ||
+          (field.width ? field.width === 'full' : defaultFullWidth);
 
         if (field.type === 'entity_list') {
           const entity = entities.find((e) => e.id === field.entityId);
@@ -792,6 +895,9 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
                   ))}
                 </select>
               )}
+              {field.helpText && (
+                <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">{field.helpText}</p>
+              )}
             </div>
           );
         }
@@ -811,6 +917,9 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
                   {field.required && <span className="text-rose-500 mr-1">*</span>}
                 </span>
               </label>
+              {field.helpText && (
+                <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">{field.helpText}</p>
+              )}
             </div>
           );
         }
@@ -921,10 +1030,10 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
                   ) : (
                     <>
                       <Upload className="w-6 h-6 text-emerald-600" />
-                      <span className="text-xs font-semibold text-slate-700">
+                      <span className="text-xs font-semibold text-slate-700 text-center">
                         {field.placeholder || 'برای انتخاب و بارگذاری فایل یا تصویر مدارک کلیک کنید'}
                       </span>
-                      <span className="text-[11px] text-slate-400">
+                      <span className="text-[11px] text-slate-400 text-center">
                         فرمت‌های مجاز: تصویر (JPG, PNG)، PDF، Word و اسناد (حداکثر {toPersianDigits(maxFileSizeMB || 5)} مگابایت)
                       </span>
                     </>
@@ -942,6 +1051,10 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
                 </label>
               )}
 
+              {field.helpText && (
+                <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">{field.helpText}</p>
+              )}
+
               {uploadErr && (
                 <div className="mt-1.5 p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-center gap-1.5">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -951,6 +1064,12 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
             </div>
           );
         }
+
+        const currencyDigits =
+          field.type === 'currency'
+            ? toEnglishDigits(String(values[field.id] ?? '')).replace(/\D/g, '')
+            : '';
+        const currencyNumeric = currencyDigits ? Number(currencyDigits) : 0;
 
         return (
           <div key={field.id} className={isFullWidth ? 'sm:col-span-2' : ''}>
@@ -982,25 +1101,87 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
               )
             ) : field.type === 'textarea' ? (
               <textarea
-                rows={2}
+                rows={3}
                 required={Boolean(field.required)}
                 placeholder={field.placeholder || ''}
                 value={String(values[field.id] ?? '')}
                 onChange={(e) => setFieldValue(field.id, e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
               />
+            ) : field.type === 'currency' ? (
+              <div className="space-y-1">
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    dir="ltr"
+                    required={Boolean(field.required)}
+                    placeholder={field.placeholder || '5000000'}
+                    value={String(values[field.id] ?? '')}
+                    onChange={(e) =>
+                      setFieldValue(field.id, toEnglishDigits(e.target.value).replace(/\D/g, ''))
+                    }
+                    className="w-full pl-16 pr-10 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition font-mono text-left"
+                  />
+                  <Banknote className="w-4 h-4 text-emerald-600 absolute right-3.5 top-3.5 pointer-events-none" />
+                  <span className="absolute left-3 top-3 text-[11px] font-bold text-slate-500 pointer-events-none">
+                    تومان
+                  </span>
+                </div>
+                {currencyNumeric > 0 && (
+                  <p className="text-[11px] font-semibold text-emerald-700">
+                    معادل: {toPersianDigits(currencyNumeric.toLocaleString('en-US'))} تومان
+                  </p>
+                )}
+              </div>
+            ) : field.type === 'national_id' || field.type === 'date' || field.type === 'phone' ? (
+              <div className="relative">
+                <input
+                  type={field.type === 'phone' ? 'tel' : 'text'}
+                  inputMode={
+                    field.type === 'national_id'
+                      ? 'numeric'
+                      : field.type === 'phone'
+                      ? 'tel'
+                      : 'text'
+                  }
+                  maxLength={field.type === 'national_id' ? 10 : undefined}
+                  dir="ltr"
+                  required={Boolean(field.required)}
+                  placeholder={
+                    field.placeholder ||
+                    (field.type === 'phone'
+                      ? '09123456789'
+                      : field.type === 'national_id'
+                      ? '0012345678'
+                      : '1365/05/12')
+                  }
+                  value={String(values[field.id] ?? '')}
+                  onChange={(e) => setFieldValue(field.id, e.target.value)}
+                  className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition font-mono text-left"
+                />
+                {field.type === 'phone' && (
+                  <Smartphone className="w-4 h-4 text-slate-400 absolute right-3.5 top-3.5 pointer-events-none" />
+                )}
+                {field.type === 'national_id' && (
+                  <CreditCard className="w-4 h-4 text-slate-400 absolute right-3.5 top-3.5 pointer-events-none" />
+                )}
+                {field.type === 'date' && (
+                  <Calendar className="w-4 h-4 text-slate-400 absolute right-3.5 top-3.5 pointer-events-none" />
+                )}
+              </div>
             ) : (
               <input
-                type={field.type === 'number' ? 'number' : field.type === 'phone' ? 'tel' : 'text'}
-                dir={field.type === 'phone' ? 'ltr' : undefined}
+                type={field.type === 'number' ? 'number' : 'text'}
                 required={Boolean(field.required)}
-                placeholder={field.placeholder || (field.type === 'phone' ? '09123456789' : '')}
+                placeholder={field.placeholder || ''}
                 value={String(values[field.id] ?? '')}
                 onChange={(e) => setFieldValue(field.id, e.target.value)}
-                className={`w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition ${
-                  field.type === 'phone' ? 'font-mono text-left' : ''
-                }`}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
               />
+            )}
+            {field.helpText && (
+              <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">{field.helpText}</p>
             )}
           </div>
         );

@@ -20,12 +20,14 @@ interface BeneficiaryLoginViewProps {
   config: AppConfig | null;
   onLoginSuccess: (beneficiary: BeneficiaryAccount, token: string) => void;
   onBackToPublic: () => void;
+  isolated?: boolean;
 }
 
 export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
   config,
   onLoginSuccess,
   onBackToPublic,
+  isolated = false,
 }) => {
   const [phone, setPhone] = useState('');
 
@@ -130,14 +132,16 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
   return (
     <div className="min-h-[80vh] flex items-center justify-center py-10 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-emerald-50/40 to-slate-50">
       <div className="max-w-md w-full space-y-5">
-        <button
-          type="button"
-          onClick={onBackToPublic}
-          className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-800 hover:text-emerald-950 transition cursor-pointer"
-        >
-          <ArrowRight className="w-4 h-4" />
-          <span>بازگشت به صفحه اصلی</span>
-        </button>
+        {!isolated && (
+          <button
+            type="button"
+            onClick={onBackToPublic}
+            className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-800 hover:text-emerald-950 transition cursor-pointer"
+          >
+            <ArrowRight className="w-4 h-4" />
+            <span>بازگشت به صفحه اصلی</span>
+          </button>
+        )}
 
         <div className="bg-white rounded-3xl shadow-xl border border-slate-200/80 p-7 sm:p-8 space-y-6">
           <div className="text-center space-y-2">

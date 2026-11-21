@@ -31,6 +31,8 @@ interface HeaderProps {
   onLogout: () => void;
   onBeneficiaryLogout?: () => void;
   standalone?: boolean;
+  beneficiaryOnly?: boolean;
+  hideAdminLogin?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -42,13 +44,17 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   onBeneficiaryLogout,
   standalone = false,
+  beneficiaryOnly = false,
+  hideAdminLogin = true,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const instName = config?.instName || 'مؤسسه خیریه حضرت ام‌البنین (س)';
+  const isLockedBrand = standalone || beneficiaryOnly;
 
   const handleNav = (view: AppView) => {
     if (standalone) return;
+    if (beneficiaryOnly && view !== 'beneficiary-login' && view !== 'beneficiary-portal') return;
     onNavigate(view);
     setMobileMenuOpen(false);
   };
@@ -59,8 +65,8 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center justify-between h-16 sm:h-20">
           {/* Logo & Institution Brand */}
           <div
-            onClick={() => !standalone && handleNav('public')}
-            className={`flex items-center gap-2 sm:gap-3 min-w-0 ${standalone ? '' : 'cursor-pointer group'}`}
+            onClick={() => !isLockedBrand && handleNav('public')}
+            className={`flex items-center gap-2 sm:gap-3 min-w-0 ${isLockedBrand ? '' : 'cursor-pointer group'}`}
           >
             {/* Logo Emblem */}
             <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-br from-amber-400 via-amber-500 to-amber-600 p-0.5 shadow-md group-hover:scale-105 transition-transform shrink-0 flex items-center justify-center">
@@ -92,6 +98,35 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex items-center gap-2 bg-emerald-950/70 px-3 py-1.5 rounded-xl border border-emerald-700/40 text-[11px] sm:text-xs text-emerald-100 font-semibold">
               <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 shrink-0" />
               <span>فرم عمومی پذیرش و پیگیری پرونده</span>
+            </div>
+          ) : beneficiaryOnly ? (
+            <div className="flex items-center gap-2">
+              {currentBeneficiary ? (
+                <div className="flex items-center gap-1.5 bg-teal-950/80 py-1.5 px-2.5 sm:px-3 rounded-xl border border-teal-600/50">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-teal-100">
+                    <UserCheck className="w-4 h-4 text-amber-300 shrink-0" />
+                    <span className="truncate max-w-[140px] sm:max-w-[220px]">
+                      {currentBeneficiary.fullName?.trim() || currentBeneficiary.phone}
+                    </span>
+                  </div>
+                  {onBeneficiaryLogout && (
+                    <button
+                      type="button"
+                      onClick={onBeneficiaryLogout}
+                      title="خروج از پروفایل مددجو"
+                      className="inline-flex items-center gap-1 mr-1 px-2 py-1 text-[11px] font-semibold text-rose-200 hover:text-white bg-rose-950/60 hover:bg-rose-800/80 rounded-lg border border-rose-700/50 transition cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span className="hidden xs:inline">خروج</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 bg-teal-950/70 px-3 py-1.5 rounded-xl border border-teal-600/40 text-[11px] sm:text-xs text-teal-100 font-semibold">
+                  <UserCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 shrink-0" />
+                  <span>پورتال اختصاصی مددجویان</span>
+                </div>
+              )}
             </div>
           ) : (
           <>
@@ -184,11 +219,11 @@ export const Header: React.FC<HeaderProps> = ({
                   <LogOut className="w-4 h-4" />
                 </button>
               </div>
-            ) : (
-              // Login Button
+            ) : !hideAdminLogin ? (
+              // Login Button (only visible if not hidden in Settings)
               <button
                 onClick={() => handleNav('login')}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer ${
                   activeView === 'login'
                     ? 'bg-amber-500 text-slate-950'
                     : 'bg-emerald-700 hover:bg-emerald-600 text-white border border-emerald-600/80'
@@ -197,7 +232,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <LogIn className="w-4 h-4 text-amber-300" />
                 <span>ورود کادر خیریه</span>
               </button>
-            )}
+            ) : null}
           </div>
 
           {/* Mobile Right Controls */}
@@ -225,7 +260,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <LogOut className="w-3.5 h-3.5" />
                 </button>
               </div>
-            ) : (
+            ) : !hideAdminLogin ? (
               // Mobile compact login or public toggle
               <button
                 onClick={() => handleNav(activeView === 'login' ? 'public' : 'login')}
@@ -237,6 +272,17 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <LogIn className="w-3.5 h-3.5 text-amber-300" />
                 <span>{activeView === 'login' ? 'فرم مراجعین' : 'ورود کادر'}</span>
+              </button>
+            ) : (
+              // Mobile compact beneficiary portal button when admin login is hidden
+              <button
+                onClick={() =>
+                  handleNav(currentBeneficiary ? 'beneficiary-portal' : 'beneficiary-login')
+                }
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shadow-sm transition bg-teal-700 hover:bg-teal-600 text-white border border-teal-500/70"
+              >
+                <UserCheck className="w-3.5 h-3.5 text-amber-300" />
+                <span>{currentBeneficiary ? 'پروفایل مددجو' : 'ورود مددجو'}</span>
               </button>
             )}
 
@@ -255,7 +301,7 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Mobile Dropdown Drawer */}
-      {!standalone && mobileMenuOpen && (
+      {!standalone && !beneficiaryOnly && mobileMenuOpen && (
         <div className="sm:hidden bg-emerald-950/95 border-b border-emerald-800/80 p-4 space-y-3 backdrop-blur-lg animate-in slide-in-from-top-2 duration-200 shadow-xl">
           {/* User Status on mobile drawer if logged in */}
           {currentUser && (
@@ -340,7 +386,7 @@ export const Header: React.FC<HeaderProps> = ({
                   مدیریت
                 </span>
               </button>
-            ) : (
+            ) : !hideAdminLogin ? (
               <button
                 onClick={() => handleNav('login')}
                 className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
@@ -357,7 +403,7 @@ export const Header: React.FC<HeaderProps> = ({
                   ورود
                 </span>
               </button>
-            )}
+            ) : null}
           </div>
 
           {/* Quick info in mobile drawer */}

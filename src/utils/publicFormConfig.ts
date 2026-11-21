@@ -1,7 +1,17 @@
-export type ScalarFieldType = 'text' | 'textarea' | 'number' | 'phone' | 'select' | 'checkbox';
+export type ScalarFieldType =
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'phone'
+  | 'national_id'
+  | 'date'
+  | 'currency'
+  | 'select'
+  | 'checkbox';
 
 export type CustomFieldType =
   | ScalarFieldType
+  | 'section'
   | 'file'
   | 'entity_list'
   | 'entity_select';
@@ -32,6 +42,8 @@ export interface CustomFormField {
   label: string;
   type: CustomFieldType;
   placeholder?: string;
+  helpText?: string;
+  width?: 'half' | 'full';
   required?: boolean;
   options?: string[];
   multiple?: boolean;
@@ -119,10 +131,14 @@ export const CUSTOM_FORM_STATUS_LABELS: Record<string, string> = {
 };
 
 export const FIELD_TYPE_LABELS: Record<CustomFieldType, string> = {
+  section: 'تیتر بخش / جداکننده (Section Header)',
   text: 'متن کوتاه (Text)',
   textarea: 'متن بلند / توضیحات (Textarea)',
-  number: 'عددی (Number)',
+  national_id: 'کد ملی ۱۰ رقمی (National ID)',
   phone: 'شماره موبایل (Phone)',
+  date: 'تاریخ شمسی (Date)',
+  currency: 'مبلغ به تومان (Currency)',
+  number: 'عددی (Number)',
   select: 'سلکت‌باکس (Select)',
   checkbox: 'چک‌باکس بله/خیر (Checkbox)',
   file: 'آپلود فایل / مدرک (File)',
@@ -133,8 +149,11 @@ export const FIELD_TYPE_LABELS: Record<CustomFieldType, string> = {
 export const SCALAR_FIELD_TYPE_LABELS: Record<ScalarFieldType, string> = {
   text: 'متن کوتاه',
   textarea: 'متن بلند',
-  number: 'عددی',
+  national_id: 'کد ملی ۱۰ رقمی',
   phone: 'شماره موبایل',
+  date: 'تاریخ شمسی',
+  currency: 'مبلغ (تومان)',
+  number: 'عددی',
   select: 'سلکت‌باکس',
   checkbox: 'چک‌باکس بله/خیر',
 };
@@ -184,10 +203,14 @@ export const DEFAULT_PUBLIC_FORM_SCHEMA: PublicFormSchema = {
 };
 
 const VALID_FIELD_TYPES: CustomFieldType[] = [
+  'section',
   'text',
   'textarea',
-  'number',
+  'national_id',
   'phone',
+  'date',
+  'currency',
+  'number',
   'select',
   'checkbox',
   'file',
@@ -198,8 +221,11 @@ const VALID_FIELD_TYPES: CustomFieldType[] = [
 const VALID_SCALAR_TYPES: ScalarFieldType[] = [
   'text',
   'textarea',
-  'number',
+  'national_id',
   'phone',
+  'date',
+  'currency',
+  'number',
   'select',
   'checkbox',
 ];
@@ -222,7 +248,9 @@ export function parseCustomFormFieldsList(raw: any): CustomFormField[] {
       label: String(f.label),
       type: (VALID_FIELD_TYPES.includes(f.type) ? f.type : 'text') as CustomFieldType,
       placeholder: f.placeholder ? String(f.placeholder) : '',
-      required: Boolean(f.required),
+      helpText: f.helpText ? String(f.helpText) : '',
+      width: f.width === 'full' || f.width === 'half' ? f.width : undefined,
+      required: f.type === 'section' ? false : Boolean(f.required),
       options: Array.isArray(f.options)
         ? f.options.map((o: any) => String(o).trim()).filter(Boolean)
         : [],
@@ -234,6 +262,166 @@ export function parseCustomFormFieldsList(raw: any): CustomFormField[] {
           : 'both',
       enabled: f.enabled !== false,
     }));
+}
+
+export function createPublicRequestFormTemplateFields(needCategoryNames?: string[]): CustomFormField[] {
+  const ts = Date.now();
+  const catOptions =
+    needCategoryNames && needCategoryNames.length > 0
+      ? needCategoryNames
+      : [
+          'درمان و هزینه‌های پزشکی و جراحی',
+          'ودیعه و اجاره‌بهای مسکن',
+          'بسته‌های معیشتی و سبد غذایی',
+          'جهیزیه و ازدواج آسان',
+          'تحصیل و لوازم‌التحریر دانش‌آموزی',
+          'اشتغال‌زایی و کارآفرینی خانگی',
+        ];
+
+  return [
+    {
+      id: `tpl_${ts}_sec1`,
+      label: '۱. مشخصات هویتی متقاضی',
+      type: 'section',
+      helpText: 'تمامی اطلاعات هویتی با رعایت کامل محرمانگی نزد واحد مددکاری محفوظ می‌ماند.',
+      width: 'full',
+      required: false,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_name`,
+      label: 'نام و نام خانوادگی متقاضی',
+      type: 'text',
+      placeholder: 'نام و نام خانوادگی کامل',
+      width: 'half',
+      required: true,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_nid`,
+      label: 'کد ملی (۱۰ رقمی)',
+      type: 'national_id',
+      placeholder: '0012345678',
+      width: 'half',
+      required: true,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_phone`,
+      label: 'شماره تماس همراه',
+      type: 'phone',
+      placeholder: '09123456789',
+      width: 'half',
+      required: true,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_birth`,
+      label: 'تاریخ تولد (شمسی)',
+      type: 'date',
+      placeholder: '1365/05/12',
+      width: 'half',
+      required: false,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_sec2`,
+      label: '۲. وضعیت خانوار و محل سکونت',
+      type: 'section',
+      width: 'full',
+      required: false,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_guardian`,
+      label: 'وضعیت سرپرستی خانوار',
+      type: 'select',
+      options: [...DEFAULT_GUARDIAN_OPTIONS],
+      width: 'half',
+      required: true,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_dependents`,
+      label: 'تعداد افراد تحت تکفل',
+      type: 'number',
+      placeholder: 'مثلاً 3',
+      width: 'half',
+      required: false,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_housing`,
+      label: 'وضعیت محل سکونت',
+      type: 'select',
+      options: [...DEFAULT_HOUSING_OPTIONS],
+      width: 'full',
+      required: true,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_sec3`,
+      label: '۳. شرح نیاز، مبلغ تخمینی و مستندات',
+      type: 'section',
+      width: 'full',
+      required: false,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_cat`,
+      label: 'دسته‌بندی موضوع نیاز',
+      type: 'select',
+      options: catOptions,
+      width: 'half',
+      required: true,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_amount`,
+      label: 'مبلغ کمک تخمینی مورد نیاز (تومان)',
+      type: 'currency',
+      placeholder: 'مثلاً 5000000',
+      helpText: 'در صورت عدم اطلاع دقیق، می‌توانید این فیلد را خالی بگذارید.',
+      width: 'half',
+      required: false,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_desc`,
+      label: 'شرح تفصیلی مشکل و وضعیت اضطرار',
+      type: 'textarea',
+      placeholder: 'لطفاً شرح وضعیت خانوار و نیاز خود را به صورت شفاف بنویسید...',
+      width: 'full',
+      required: true,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_address`,
+      label: 'آدرس دقیق محل سکونت',
+      type: 'textarea',
+      placeholder: 'شهر، محله، خیابان، کوچه، پلاک و واحد',
+      width: 'full',
+      required: true,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_doc`,
+      label: 'بارگذاری تصویر مدارک هویتی یا مستندات (اختیاری)',
+      type: 'file',
+      placeholder: 'تصویر کارت ملی، اجاره‌نامه یا نسخه پزشکی را بارگذاری نمایید',
+      width: 'full',
+      required: false,
+      enabled: true,
+    },
+    {
+      id: `tpl_${ts}_confirm`,
+      label: 'صحت اطلاعات واردشده را تایید می‌نمایم و با بررسی میدانی کارشناسان مؤسسه موافقم',
+      type: 'checkbox',
+      width: 'full',
+      required: true,
+      enabled: true,
+    },
+  ];
 }
 
 export function parseEntitySubFieldsList(raw: any): EntitySubField[] {

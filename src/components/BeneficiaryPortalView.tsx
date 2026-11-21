@@ -39,6 +39,7 @@ interface BeneficiaryPortalViewProps {
   entities: EntityDefinition[];
   onLogout: () => void;
   onBackToPublic: () => void;
+  isolated?: boolean;
 }
 
 export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
@@ -47,6 +48,7 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
   entities,
   onLogout,
   onBackToPublic,
+  isolated = false,
 }) => {
   const [account, setAccount] = useState<BeneficiaryAccount>(beneficiary);
   const [items, setItems] = useState<BeneficiaryPortalFormItem[]>([]);
@@ -156,14 +158,20 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
     <div className="py-8 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto space-y-6">
       {/* Top Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={onBackToPublic}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 hover:text-emerald-950 transition cursor-pointer"
-        >
-          <ArrowRight className="w-4 h-4" />
-          <span>بازگشت به صفحه اصلی</span>
-        </button>
+        {!isolated ? (
+          <button
+            type="button"
+            onClick={onBackToPublic}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 hover:text-emerald-950 transition cursor-pointer"
+          >
+            <ArrowRight className="w-4 h-4" />
+            <span>بازگشت به صفحه اصلی</span>
+          </button>
+        ) : (
+          <div className="text-xs font-bold text-emerald-900">
+            پروفایل اختصاصی و امن مددجو
+          </div>
+        )}
 
         <div className="flex items-center gap-2">
           <button
