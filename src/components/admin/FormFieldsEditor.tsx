@@ -6,6 +6,8 @@ import {
   ArrowDown,
   Layers,
   AlertTriangle,
+  Upload,
+  Smartphone,
 } from 'lucide-react';
 import {
   CustomFieldType,
@@ -35,6 +37,7 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
   const [newFieldRequired, setNewFieldRequired] = useState(false);
   const [newFieldOptions, setNewFieldOptions] = useState<string[]>([]);
   const [newFieldOptInput, setNewFieldOptInput] = useState('');
+  const [newFieldMultiple, setNewFieldMultiple] = useState(false);
   const [newFieldEntityId, setNewFieldEntityId] = useState<string>(() => entities[0]?.id || '');
   const [newEntitySelectSource, setNewEntitySelectSource] = useState<'both' | 'catalog' | 'form_rows'>('both');
   const [inlineOptionInputs, setInlineOptionInputs] = useState<Record<string, string>>({});
@@ -74,6 +77,10 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
       placeholder: newFieldPlaceholder.trim(),
       required: newFieldRequired,
       options: newFieldType === 'select' ? [...newFieldOptions] : [],
+      multiple:
+        newFieldType === 'select' || newFieldType === 'entity_select'
+          ? newFieldMultiple
+          : undefined,
       entityId:
         newFieldType === 'entity_list' || newFieldType === 'entity_select'
           ? effectiveEntityId
@@ -90,6 +97,7 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
     setNewFieldRequired(false);
     setNewFieldOptions([]);
     setNewFieldOptInput('');
+    setNewFieldMultiple(false);
   };
 
   const updateField = (id: string, patch: Partial<CustomFormField>) => {
@@ -197,7 +205,13 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
                   type="text"
                   value={newFieldPlaceholder}
                   onChange={(e) => setNewFieldPlaceholder(e.target.value)}
-                  placeholder="مثال: انتخاب یا وارد کنید..."
+                  placeholder={
+                    newFieldType === 'file'
+                      ? 'مثال: تصویر شناسنامه یا مدارک خود را بارگذاری نمایید'
+                      : newFieldType === 'phone'
+                      ? 'مثال: 09123456789'
+                      : 'مثال: انتخاب یا وارد کنید...'
+                  }
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
@@ -240,7 +254,7 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
 
         {/* Entity Select Source selector */}
         {newFieldType === 'entity_select' && (
-          <div className="p-3 bg-teal-50/70 border border-teal-200 rounded-xl space-y-1.5">
+          <div className="p-3 bg-teal-50/70 border border-teal-200 rounded-xl space-y-2">
             <label className="block font-bold text-teal-900 text-[11px]">
               منبع گزینه‌های سلکت‌باکس از موجودیت:
             </label>
@@ -255,15 +269,35 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
               <option value="catalog">فقط مقادیر ثابت تعریف‌شده در بانک موجودیت‌ها</option>
               <option value="form_rows">فقط ردیف‌هایی که کاربر در فیلد موجودیتی همین فرم اضافه کرده</option>
             </select>
+            <label className="flex items-center gap-2 cursor-pointer text-teal-900 font-semibold text-[11px] pt-0.5">
+              <input
+                type="checkbox"
+                checked={newFieldMultiple}
+                onChange={(e) => setNewFieldMultiple(e.target.checked)}
+                className="rounded text-teal-600 focus:ring-teal-500"
+              />
+              <span>امکان انتخاب چند گزینه به صورت هم‌زمان (چندانتخابی / Multi-Select)</span>
+            </label>
           </div>
         )}
 
         {/* Options builder if new field is SELECT */}
         {newFieldType === 'select' && (
           <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-2.5">
-            <label className="block font-bold text-emerald-900 text-[11px]">
-              گزینه‌های این سلکت‌باکس را اضافه کنید:
-            </label>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <label className="block font-bold text-emerald-900 text-[11px]">
+                گزینه‌های این سلکت‌باکس را اضافه کنید:
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer text-emerald-900 font-semibold text-[11px]">
+                <input
+                  type="checkbox"
+                  checked={newFieldMultiple}
+                  onChange={(e) => setNewFieldMultiple(e.target.checked)}
+                  className="rounded text-emerald-600 focus:ring-emerald-500"
+                />
+                <span>امکان انتخاب چند گزینه (چندانتخابی / Multi-Select)</span>
+              </label>
+            </div>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -356,12 +390,18 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
                       className={`px-2 py-0.5 rounded-md font-semibold text-[11px] inline-flex items-center gap-1 ${
                         field.type === 'entity_list' || field.type === 'entity_select'
                           ? 'bg-emerald-100 text-emerald-800'
+                          : field.type === 'file'
+                          ? 'bg-indigo-100 text-indigo-800'
+                          : field.type === 'phone'
+                          ? 'bg-amber-100 text-amber-800'
                           : 'bg-slate-100 text-slate-700'
                       }`}
                     >
                       {(field.type === 'entity_list' || field.type === 'entity_select') && (
                         <Layers className="w-3 h-3" />
                       )}
+                      {field.type === 'file' && <Upload className="w-3 h-3" />}
+                      {field.type === 'phone' && <Smartphone className="w-3 h-3" />}
                       {FIELD_TYPE_LABELS[field.type]}
                     </span>
                     <input
@@ -373,6 +413,20 @@ export const FormFieldsEditor: React.FC<FormFieldsEditorProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1.5 flex-wrap">
+                    {(field.type === 'select' || field.type === 'entity_select') && (
+                      <label className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-teal-50 border border-teal-200 cursor-pointer text-[11px] text-teal-900 font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(field.multiple)}
+                          onChange={(e) =>
+                            updateField(field.id, { multiple: e.target.checked })
+                          }
+                          className="rounded text-teal-600"
+                        />
+                        <span>چندانتخابی</span>
+                      </label>
+                    )}
+
                     <label className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer text-[11px]">
                       <input
                         type="checkbox"

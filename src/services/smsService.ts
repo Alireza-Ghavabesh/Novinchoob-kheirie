@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { PushNotificationService } from './pushService.ts';
+import { appendSmsCancellationFooter } from '../utils/smsFormat.ts';
 
 export interface TriggerContext {
   eventType: 'REQUEST_CREATED' | 'REQUEST_STATUS_CHANGED' | 'PROGRAM_CREATED' | 'PROGRAM_STATUS_CHANGED' | 'USER_LOGIN' | 'PASSWORD_RESET';
@@ -131,8 +132,9 @@ export class GhasedakSmsService {
       } else {
         // Send via Simple SMS API
         // Endpoint: https://api.ghasedaksms.com/v2/sms/send/simple
+        const finalMessage = appendSmsCancellationFooter(message);
         const params = new URLSearchParams();
-        params.append('message', message);
+        params.append('message', finalMessage);
         params.append('receptor', cleanReceptor);
         if (senderLine && senderLine.trim()) {
           params.append('linenumber', senderLine.trim());
@@ -233,8 +235,12 @@ export class GhasedakSmsService {
         const uniqueRecipients = Array.from(new Set(recipients.filter(Boolean)));
         if (uniqueRecipients.length === 0) continue;
 
-        // Render message content
-        const renderedMessage = this.formatMessage(rule.messageBody, ctx, instName);
+        // Render message content and append cancellation footer on a new line for SMS
+        const rawRenderedMessage = this.formatMessage(rule.messageBody, ctx, instName);
+        const isOtpPattern = rule.templateType === 'OTP' && Boolean(rule.templateName?.trim());
+        const renderedMessage = isOtpPattern
+          ? rawRenderedMessage
+          : appendSmsCancellationFooter(rawRenderedMessage);
 
         // Map template parameters if OTP
         const param1 = rule.templateParam1 ? this.formatMessage(rule.templateParam1, ctx, instName) : undefined;
@@ -286,7 +292,7 @@ export class GhasedakSmsService {
         if (rule.sendPush) {
           this.pushService.sendNotification({
             title: rule.title || `${instName} - پیام جدید`,
-            body: renderedMessage,
+            body: rawRenderedMessage,
             url: ctx.data?.trackingCode ? `/` : '/',
             username: rule.userFilter !== 'ALL' ? (rule.userFilter || undefined) : undefined,
           }).catch(e => console.error('Push Notification dispatch error:', e));

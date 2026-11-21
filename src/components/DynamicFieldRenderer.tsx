@@ -1,15 +1,37 @@
-import React from 'react';
-import { Plus, Trash2, Layers } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Plus,
+  Trash2,
+  Layers,
+  ChevronDown,
+  Check,
+  Upload,
+  FileText,
+  ExternalLink,
+  AlertCircle,
+} from 'lucide-react';
 import {
   CustomFormField,
   EntityDefinition,
   EntitySubField,
   SubmittedCustomFieldValue,
+  formatBytesCompact,
   formatEntityRowSummary,
 } from '../utils/publicFormConfig';
 import { toPersianDigits } from '../utils/persian';
+import { api } from '../services/api';
 
 export type DynamicFormValuesMap = Record<string, any>;
+
+function normalizeMultiArray(rawVal: any): string[] {
+  if (Array.isArray(rawVal)) {
+    return rawVal.map((v) => String(v).trim()).filter(Boolean);
+  }
+  if (typeof rawVal === 'string' && rawVal.trim()) {
+    return [rawVal.trim()];
+  }
+  return [];
+}
 
 /**
  * Validates and extracts structured SubmittedCustomFieldValue[] from active form fields and state values.
@@ -26,7 +48,27 @@ export function validateAndExtractCustomFields(
   for (const field of activeFields) {
     const rawVal = values[field.id];
 
-    if (field.type === 'checkbox') {
+    if (field.type === 'file') {
+      const fileObj =
+        rawVal && typeof rawVal === 'object' && rawVal.fileUrl
+          ? (rawVal as { fileUrl: string; fileName?: string; fileSize?: number; mimeType?: string })
+          : null;
+      if (field.required && !fileObj?.fileUrl) {
+        return { error: `لطفاً فایل مربوط به «${field.label}» را بارگذاری نمایید.`, values: [] };
+      }
+      if (fileObj?.fileUrl) {
+        result.push({
+          id: field.id,
+          label: field.label,
+          type: 'file',
+          value: fileObj.fileName || 'فایل پیوست‌شده',
+          fileUrl: fileObj.fileUrl,
+          fileName: fileObj.fileName,
+          fileSize: fileObj.fileSize,
+          mimeType: fileObj.mimeType,
+        });
+      }
+    } else if (field.type === 'checkbox') {
       const checked = Boolean(rawVal);
       if (field.required && !checked) {
         return { error: `لطفاً گزینه «${field.label}» را تایید نمایید.`, values: [] };
@@ -38,34 +80,74 @@ export function validateAndExtractCustomFields(
         value: checked ? 'بله' : 'خیر',
       });
     } else if (field.type === 'select') {
-      const val = String(rawVal ?? field.options?.[0] ?? '').trim();
-      if (field.required && !val) {
-        return { error: `لطفاً «${field.label}» را انتخاب نمایید.`, values: [] };
-      }
-      if (val) {
-        result.push({
-          id: field.id,
-          label: field.label,
-          type: field.type,
-          value: val,
-        });
+      if (field.multiple) {
+        const selected = normalizeMultiArray(rawVal).filter((v) =>
+          (field.options || []).includes(v)
+        );
+        if (field.required && selected.length === 0) {
+          return {
+            error: `لطفاً حداقل یک گزینه برای «${field.label}» انتخاب نمایید.`,
+            values: [],
+          };
+        }
+        if (selected.length > 0) {
+          result.push({
+            id: field.id,
+            label: field.label,
+            type: field.type,
+            value: selected.join('، '),
+          });
+        }
+      } else {
+        const val = String(rawVal ?? field.options?.[0] ?? '').trim();
+        if (field.required && !val) {
+          return { error: `لطفاً «${field.label}» را انتخاب نمایید.`, values: [] };
+        }
+        if (val) {
+          result.push({
+            id: field.id,
+            label: field.label,
+            type: field.type,
+            value: val,
+          });
+        }
       }
     } else if (field.type === 'entity_select') {
       const options = resolveEntitySelectOptions(field, fields, values, entities);
-      const val = String(rawVal ?? options[0] ?? '').trim();
-      if (field.required && !val) {
-        return { error: `لطفاً یک مورد برای «${field.label}» انتخاب نمایید.`, values: [] };
-      }
-      if (val) {
-        const entity = entities.find((e) => e.id === field.entityId);
-        result.push({
-          id: field.id,
-          label: field.label,
-          type: field.type,
-          value: val,
-          entityId: field.entityId,
-          entityName: entity?.name,
-        });
+      const entity = entities.find((e) => e.id === field.entityId);
+      if (field.multiple) {
+        const selected = normalizeMultiArray(rawVal).filter((v) => options.includes(v));
+        if (field.required && selected.length === 0) {
+          return {
+            error: `لطفاً حداقل یک مورد برای «${field.label}» انتخاب نمایید.`,
+            values: [],
+          };
+        }
+        if (selected.length > 0) {
+          result.push({
+            id: field.id,
+            label: field.label,
+            type: field.type,
+            value: selected.join('، '),
+            entityId: field.entityId,
+            entityName: entity?.name,
+          });
+        }
+      } else {
+        const val = String(rawVal ?? options[0] ?? '').trim();
+        if (field.required && !val) {
+          return { error: `لطفاً یک مورد برای «${field.label}» انتخاب نمایید.`, values: [] };
+        }
+        if (val) {
+          result.push({
+            id: field.id,
+            label: field.label,
+            type: field.type,
+            value: val,
+            entityId: field.entityId,
+            entityName: entity?.name,
+          });
+        }
       }
     } else if (field.type === 'entity_list') {
       const entity = entities.find((e) => e.id === field.entityId);
@@ -95,14 +177,27 @@ export function validateAndExtractCustomFields(
               }
               labeledRow[sub.label] = checked ? 'بله' : 'خیر';
             } else if (sub.type === 'select') {
-              const sVal = String(subRaw ?? sub.options?.[0] ?? '').trim();
-              if (sub.required && !sVal) {
-                return {
-                  error: `در ردیف ${toPersianDigits(rIdx + 1)} از «${field.label}»، انتخاب «${sub.label}» الزامی است.`,
-                  values: [],
-                };
+              if (sub.multiple) {
+                const selectedSub = normalizeMultiArray(subRaw).filter((v) =>
+                  (sub.options || []).includes(v)
+                );
+                if (sub.required && selectedSub.length === 0) {
+                  return {
+                    error: `در ردیف ${toPersianDigits(rIdx + 1)} از «${field.label}»، انتخاب حداقل یک گزینه برای «${sub.label}» الزامی است.`,
+                    values: [],
+                  };
+                }
+                labeledRow[sub.label] = selectedSub.join('، ');
+              } else {
+                const sVal = String(subRaw ?? sub.options?.[0] ?? '').trim();
+                if (sub.required && !sVal) {
+                  return {
+                    error: `در ردیف ${toPersianDigits(rIdx + 1)} از «${field.label}»، انتخاب «${sub.label}» الزامی است.`,
+                    values: [],
+                  };
+                }
+                labeledRow[sub.label] = sVal;
               }
-              labeledRow[sub.label] = sVal;
             } else {
               const sVal = String(subRaw ?? '').trim();
               if (sub.required && !sVal) {
@@ -160,6 +255,75 @@ export function validateAndExtractCustomFields(
   return { values: result };
 }
 
+/**
+ * Hydrates DynamicFormValuesMap from an existing SubmittedCustomFieldValue[] array for editing.
+ */
+export function hydrateValuesFromSubmission(
+  fields: CustomFormField[],
+  submittedData: SubmittedCustomFieldValue[],
+  entities: EntityDefinition[]
+): DynamicFormValuesMap {
+  const map: DynamicFormValuesMap = {};
+  const byId = new Map<string, SubmittedCustomFieldValue>();
+  for (const item of submittedData || []) {
+    if (item?.id) byId.set(item.id, item);
+  }
+
+  for (const field of fields || []) {
+    const saved = byId.get(field.id) || (submittedData || []).find((d) => d.label === field.label);
+    if (!saved) continue;
+
+    if (field.type === 'checkbox') {
+      map[field.id] = saved.value === 'بله' || saved.value === 'true';
+    } else if (field.type === 'file') {
+      if (saved.fileUrl) {
+        map[field.id] = {
+          fileUrl: saved.fileUrl,
+          fileName: saved.fileName || saved.value,
+          fileSize: saved.fileSize,
+          mimeType: saved.mimeType,
+        };
+      }
+    } else if (field.type === 'select' || field.type === 'entity_select') {
+      if (field.multiple) {
+        map[field.id] = String(saved.value || '')
+          .split('،')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      } else {
+        map[field.id] = String(saved.value || '');
+      }
+    } else if (field.type === 'entity_list') {
+      const entity = entities.find((e) => e.id === field.entityId);
+      const savedRows = Array.isArray(saved.items) ? saved.items : [];
+      map[field.id] = savedRows.map((labeledRow) => {
+        const rowObj: Record<string, any> = {};
+        if (entity && entity.fields.length > 0) {
+          for (const sub of entity.fields) {
+            const rawSubVal = labeledRow[sub.label];
+            if (sub.type === 'checkbox') {
+              rowObj[sub.id] = rawSubVal === 'بله' || rawSubVal === 'true';
+            } else if (sub.type === 'select' && sub.multiple) {
+              rowObj[sub.id] = String(rawSubVal || '')
+                .split('،')
+                .map((s) => s.trim())
+                .filter(Boolean);
+            } else {
+              rowObj[sub.id] = String(rawSubVal ?? '');
+            }
+          }
+        } else {
+          rowObj._text = String(labeledRow['عنوان'] ?? Object.values(labeledRow)[0] ?? '');
+        }
+        return rowObj;
+      });
+    } else {
+      map[field.id] = String(saved.value ?? '');
+    }
+  }
+  return map;
+}
+
 export function resolveEntitySelectOptions(
   field: CustomFormField,
   allFields: CustomFormField[],
@@ -195,7 +359,9 @@ export function resolveEntitySelectOptions(
                 ? 'بله'
                 : 'خیر'
               : sub.type === 'select'
-              ? String(row[sub.id] ?? sub.options?.[0] ?? '')
+              ? sub.multiple
+                ? normalizeMultiArray(row[sub.id]).join('، ')
+                : String(row[sub.id] ?? sub.options?.[0] ?? '')
               : String(row[sub.id] ?? '');
           if (val.trim()) labeled[sub.label] = val;
         });
@@ -216,7 +382,7 @@ function buildDefaultEntityRow(entity?: EntityDefinition): Record<string, any> {
   if (!entity) return row;
   for (const sub of entity.fields) {
     if (sub.type === 'select') {
-      row[sub.id] = sub.options?.[0] || '';
+      row[sub.id] = sub.multiple ? [] : sub.options?.[0] || '';
     } else if (sub.type === 'checkbox') {
       row[sub.id] = false;
     } else {
@@ -226,12 +392,120 @@ function buildDefaultEntityRow(entity?: EntityDefinition): Record<string, any> {
   return row;
 }
 
+interface MultiSelectDropdownProps {
+  options: string[];
+  selected: string[];
+  onChange: (nextSelected: string[]) => void;
+  placeholder?: string;
+}
+
+const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
+  options,
+  selected,
+  onChange,
+  placeholder = 'انتخاب یک یا چند گزینه...',
+}) => {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const toggleOption = (opt: string) => {
+    if (selected.includes(opt)) {
+      onChange(selected.filter((item) => item !== opt));
+    } else {
+      onChange([...selected, opt]);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className={`w-full px-3.5 py-2.5 rounded-xl border text-xs bg-white text-right flex items-center justify-between gap-2 transition cursor-pointer ${
+          open
+            ? 'border-emerald-500 ring-2 ring-emerald-500/30'
+            : 'border-slate-300 hover:border-slate-400'
+        }`}
+      >
+        <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
+          {selected.length === 0 ? (
+            <span className="text-slate-400">{placeholder}</span>
+          ) : (
+            selected.map((item) => (
+              <span
+                key={item}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-900 font-semibold text-[11px]"
+              >
+                <span>{item}</span>
+              </span>
+            ))
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0 text-slate-400">
+          {selected.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold">
+              {toPersianDigits(selected.length)}
+            </span>
+          )}
+          <ChevronDown
+            className={`w-4 h-4 transition-transform ${open ? 'rotate-180 text-emerald-600' : ''}`}
+          />
+        </div>
+      </button>
+
+      {open && (
+        <div className="absolute z-30 mt-1.5 w-full bg-white rounded-xl border border-slate-200 shadow-lg max-h-52 overflow-y-auto p-1.5 space-y-1">
+          {options.map((opt) => {
+            const isChecked = selected.includes(opt);
+            return (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => toggleOption(opt)}
+                className={`w-full px-2.5 py-2 rounded-lg text-xs text-right flex items-center justify-between gap-2 transition cursor-pointer ${
+                  isChecked
+                    ? 'bg-emerald-50 text-emerald-900 font-bold'
+                    : 'hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <span className="truncate">{opt}</span>
+                <span
+                  className={`w-4 h-4 rounded flex items-center justify-center border shrink-0 transition ${
+                    isChecked
+                      ? 'bg-emerald-600 border-emerald-600 text-white'
+                      : 'border-slate-300 bg-white'
+                  }`}
+                >
+                  {isChecked && <Check className="w-3 h-3" />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 interface DynamicFieldRendererProps {
   fields: CustomFormField[];
   values: DynamicFormValuesMap;
   entities: EntityDefinition[];
   onChange: (nextValues: DynamicFormValuesMap) => void;
   compact?: boolean;
+  maxFileSizeMB?: number;
+  uploadContext?: { formId?: string; formSlug?: string; source?: string };
 }
 
 export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
@@ -240,12 +514,50 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
   entities,
   onChange,
   compact = false,
+  maxFileSizeMB = 5,
+  uploadContext,
 }) => {
+  const [uploadingFieldId, setUploadingFieldId] = useState<string | null>(null);
+  const [fileUploadErrors, setFileUploadErrors] = useState<Record<string, string>>({});
+
   const activeFields = fields.filter((f) => f.enabled !== false);
   if (activeFields.length === 0) return null;
 
   const setFieldValue = (fieldId: string, val: any) => {
     onChange({ ...values, [fieldId]: val });
+  };
+
+  const handleFileSelect = async (fieldId: string, file?: File | null) => {
+    if (!file) return;
+    setFileUploadErrors((prev) => ({ ...prev, [fieldId]: '' }));
+    const limitMb = maxFileSizeMB > 0 ? maxFileSizeMB : 5;
+    const maxBytes = limitMb * 1024 * 1024;
+    if (file.size > maxBytes) {
+      const actualMb = (file.size / (1024 * 1024)).toFixed(2);
+      setFileUploadErrors((prev) => ({
+        ...prev,
+        [fieldId]: `حجم فایل انتخاب‌شده (${toPersianDigits(actualMb)} مگابایت) بیشتر از سقف مجاز این فرم (${toPersianDigits(limitMb)} مگابایت) است.`,
+      }));
+      return;
+    }
+
+    setUploadingFieldId(fieldId);
+    try {
+      const uploaded = await api.uploadFile(file, uploadContext);
+      setFieldValue(fieldId, {
+        fileUrl: uploaded.url,
+        fileName: uploaded.name,
+        fileSize: uploaded.size,
+        mimeType: uploaded.mimeType,
+      });
+    } catch (err: any) {
+      setFileUploadErrors((prev) => ({
+        ...prev,
+        [fieldId]: err.message || 'خطا در آپلود فایل',
+      }));
+    } finally {
+      setUploadingFieldId(null);
+    }
   };
 
   const renderSubFieldInput = (
@@ -285,18 +597,26 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
           {sub.required && <span className="text-rose-500 mr-1">*</span>}
         </label>
         {sub.type === 'select' ? (
-          <select
-            required={Boolean(sub.required)}
-            value={String(val ?? sub.options?.[0] ?? '')}
-            onChange={(e) => updateSubVal(e.target.value)}
-            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
-          >
-            {(sub.options || []).map((opt) => (
-              <option key={opt} value={opt}>
-                {opt}
-              </option>
-            ))}
-          </select>
+          sub.multiple ? (
+            <MultiSelectDropdown
+              options={sub.options || []}
+              selected={normalizeMultiArray(val)}
+              onChange={(nextSelected) => updateSubVal(nextSelected)}
+            />
+          ) : (
+            <select
+              required={Boolean(sub.required)}
+              value={String(val ?? sub.options?.[0] ?? '')}
+              onChange={(e) => updateSubVal(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+            >
+              {(sub.options || []).map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          )
         ) : sub.type === 'textarea' ? (
           <textarea
             rows={2}
@@ -308,9 +628,10 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
           />
         ) : (
           <input
-            type={sub.type === 'number' ? 'number' : 'text'}
+            type={sub.type === 'number' ? 'number' : sub.type === 'phone' ? 'tel' : 'text'}
+            dir={sub.type === 'phone' ? 'ltr' : undefined}
             required={Boolean(sub.required)}
-            placeholder={sub.placeholder || ''}
+            placeholder={sub.placeholder || (sub.type === 'phone' ? '09123456789' : '')}
             value={String(val ?? '')}
             onChange={(e) => updateSubVal(e.target.value)}
             className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
@@ -327,6 +648,7 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
           compact ||
           field.type === 'textarea' ||
           field.type === 'checkbox' ||
+          field.type === 'file' ||
           field.type === 'entity_list';
 
         if (field.type === 'entity_list') {
@@ -448,6 +770,14 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
                 <div className="px-3.5 py-2.5 rounded-xl border border-amber-200 bg-amber-50 text-[11px] text-amber-800">
                   هنوز گزینه‌ای برای این موجودیت در دسترس نیست (ابتدا در جدول موجودیت مرتبط یا تنظیمات موجودیت موردی اضافه کنید).
                 </div>
+              ) : field.multiple ? (
+                <MultiSelectDropdown
+                  options={entityOptions}
+                  selected={normalizeMultiArray(values[field.id]).filter((v) =>
+                    entityOptions.includes(v)
+                  )}
+                  onChange={(nextSelected) => setFieldValue(field.id, nextSelected)}
+                />
               ) : (
                 <select
                   required={Boolean(field.required)}
@@ -485,6 +815,143 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
           );
         }
 
+        if (field.type === 'file') {
+          const uploadedVal =
+            values[field.id] && typeof values[field.id] === 'object' && values[field.id].fileUrl
+              ? (values[field.id] as {
+                  fileUrl: string;
+                  fileName?: string;
+                  fileSize?: number;
+                  mimeType?: string;
+                })
+              : null;
+          const isUploading = uploadingFieldId === field.id;
+          const uploadErr = fileUploadErrors[field.id];
+          const isImage = Boolean(
+            uploadedVal?.mimeType?.startsWith('image/') ||
+              /\.(jpg|jpeg|png|gif|webp)$/i.test(uploadedVal?.fileName || '')
+          );
+
+          return (
+            <div key={field.id} className={isFullWidth ? 'sm:col-span-2' : ''}>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700">
+                  {field.label}
+                  {field.required && <span className="text-rose-500 mr-1">*</span>}
+                </label>
+                <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                  حداکثر حجم مجاز: {toPersianDigits(maxFileSizeMB || 5)} مگابایت
+                </span>
+              </div>
+
+              {uploadedVal ? (
+                <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {isImage ? (
+                      <img
+                        src={uploadedVal.fileUrl}
+                        alt={uploadedVal.fileName || field.label}
+                        className="w-12 h-12 rounded-lg object-cover border border-emerald-200 shrink-0 bg-white"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                        <FileText className="w-5 h-5" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-800 truncate">
+                        {uploadedVal.fileName || 'فایل بارگذاری‌شده'}
+                      </p>
+                      {uploadedVal.fileSize && (
+                        <p className="text-[11px] text-slate-500">
+                          حجم: {formatBytesCompact(uploadedVal.fileSize)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <a
+                      href={uploadedVal.fileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-[11px] font-semibold"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>مشاهده / دانلود</span>
+                    </a>
+                    <label className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold cursor-pointer">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>تغییر فایل</span>
+                      <input
+                        type="file"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = '';
+                          handleFileSelect(field.id, f);
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setFieldValue(field.id, null)}
+                      className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                      title="حذف فایل"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <label
+                  className={`flex flex-col items-center justify-center gap-2 p-5 rounded-xl border-2 border-dashed transition cursor-pointer ${
+                    isUploading
+                      ? 'border-emerald-400 bg-emerald-50/40 opacity-80'
+                      : 'border-slate-300 hover:border-emerald-500 bg-slate-50/60 hover:bg-emerald-50/30'
+                  }`}
+                >
+                  {isUploading ? (
+                    <>
+                      <div className="w-6 h-6 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-xs font-semibold text-emerald-700">
+                        در حال بارگذاری فایل...
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-6 h-6 text-emerald-600" />
+                      <span className="text-xs font-semibold text-slate-700">
+                        {field.placeholder || 'برای انتخاب و بارگذاری فایل یا تصویر مدارک کلیک کنید'}
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        فرمت‌های مجاز: تصویر (JPG, PNG)، PDF، Word و اسناد (حداکثر {toPersianDigits(maxFileSizeMB || 5)} مگابایت)
+                      </span>
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    disabled={isUploading}
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = '';
+                      handleFileSelect(field.id, f);
+                    }}
+                  />
+                </label>
+              )}
+
+              {uploadErr && (
+                <div className="mt-1.5 p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{uploadErr}</span>
+                </div>
+              )}
+            </div>
+          );
+        }
+
         return (
           <div key={field.id} className={isFullWidth ? 'sm:col-span-2' : ''}>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
@@ -492,18 +959,27 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
               {field.required && <span className="text-rose-500 mr-1">*</span>}
             </label>
             {field.type === 'select' ? (
-              <select
-                required={Boolean(field.required)}
-                value={String(values[field.id] ?? field.options?.[0] ?? '')}
-                onChange={(e) => setFieldValue(field.id, e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
-              >
-                {(field.options || []).map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
+              field.multiple ? (
+                <MultiSelectDropdown
+                  options={field.options || []}
+                  selected={normalizeMultiArray(values[field.id])}
+                  onChange={(nextSelected) => setFieldValue(field.id, nextSelected)}
+                  placeholder={field.placeholder || 'انتخاب یک یا چند گزینه...'}
+                />
+              ) : (
+                <select
+                  required={Boolean(field.required)}
+                  value={String(values[field.id] ?? field.options?.[0] ?? '')}
+                  onChange={(e) => setFieldValue(field.id, e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                >
+                  {(field.options || []).map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+              )
             ) : field.type === 'textarea' ? (
               <textarea
                 rows={2}
@@ -515,12 +991,15 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
               />
             ) : (
               <input
-                type={field.type === 'number' ? 'number' : 'text'}
+                type={field.type === 'number' ? 'number' : field.type === 'phone' ? 'tel' : 'text'}
+                dir={field.type === 'phone' ? 'ltr' : undefined}
                 required={Boolean(field.required)}
-                placeholder={field.placeholder || ''}
+                placeholder={field.placeholder || (field.type === 'phone' ? '09123456789' : '')}
                 value={String(values[field.id] ?? '')}
                 onChange={(e) => setFieldValue(field.id, e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
+                className={`w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition ${
+                  field.type === 'phone' ? 'font-mono text-left' : ''
+                }`}
               />
             )}
           </div>

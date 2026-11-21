@@ -145,6 +145,8 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
 
   const handleResetAll = () => {
     setSchema({
+      ...DEFAULT_PUBLIC_FORM_SCHEMA,
+      maxFileSizeMB: 5,
       builtin: { ...DEFAULT_PUBLIC_FORM_SCHEMA.builtin },
       guardianOptions: [...DEFAULT_GUARDIAN_OPTIONS],
       housingOptions: [...DEFAULT_HOUSING_OPTIONS],
@@ -489,6 +491,33 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
           )}
         </div>
 
+        <div className="p-3 rounded-xl bg-white border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <div>
+            <span className="font-bold text-slate-800 block">
+              حداکثر حجم مجاز فایل آپلودی در فرم عمومی (مگابایت)
+            </span>
+            <span className="text-[11px] text-slate-500">
+              در صورت افزودن فیلد «آپلود فایل / مدرک» به فرم عمومی، سقف حجم هر فایل با این مقدار کنترل می‌شود.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              type="number"
+              min={1}
+              max={25}
+              value={schema.maxFileSizeMB || 5}
+              onChange={(e) =>
+                setSchema((prev) => ({
+                  ...prev,
+                  maxFileSizeMB: Math.min(25, Math.max(1, Number(e.target.value) || 5)),
+                }))
+              }
+              className="w-20 px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-center font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <span className="text-slate-600 font-semibold">مگابایت</span>
+          </div>
+        </div>
+
         <FormFieldsEditor
           fields={schema.customFields}
           entities={entities}
@@ -496,7 +525,7 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
             setSchema((prev) => ({ ...prev, customFields: nextFields }))
           }
           onNavigateToEntities={onOpenEntitiesTab}
-          emptyText="هنوز فیلد سفارشی اضافه نشده است. از بخش بالا می‌توانید فیلدهای متنی، عددی، سلکت‌باکس یا موجودیتی به فرم عمومی اضافه کنید."
+          emptyText="هنوز فیلد سفارشی اضافه نشده است. از بخش بالا می‌توانید فیلدهای متنی، عددی، سلکت‌باکس، آپلود فایل یا موجودیتی به فرم عمومی اضافه کنید."
         />
       </div>
 

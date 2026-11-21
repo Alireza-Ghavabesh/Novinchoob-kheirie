@@ -61,6 +61,7 @@ model BeneficiaryRequest {
   approvedDate    String?
   approvedBy      String?
   customFields    String   @default("[]")
+  beneficiaryId   String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
@@ -204,32 +205,52 @@ model EntityDefinition {
 }
 
 model CustomForm {
-  id               String                 @id @default(cuid())
-  slug             String                 @unique
-  title            String
-  description      String                 @default("")
-  heroBadge        String                 @default("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ")
-  theme            String                 @default("emerald")
-  submitButtonText String                 @default("ثبت نهایی اطلاعات")
-  successMessage   String                 @default("اطلاعات شما با موفقیت در سیستم ثبت گردید.")
-  isActive         Boolean                @default(true)
-  showTracking     Boolean                @default(true)
-  fields           String                 @default("[]")
-  submissions      CustomFormSubmission[]
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  id                      String                 @id @default(cuid())
+  slug                    String                 @unique
+  title                   String
+  description             String                 @default("")
+  heroBadge               String                 @default("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ")
+  theme                   String                 @default("emerald")
+  submitButtonText        String                 @default("ثبت نهایی اطلاعات")
+  successMessage          String                 @default("اطلاعات شما با موفقیت در سیستم ثبت گردید.")
+  isActive                Boolean                @default(true)
+  showTracking            Boolean                @default(true)
+  showInBeneficiaryPortal Boolean                @default(false)
+  maxFileSizeMB           Int                    @default(5)
+  smsRules                String                 @default("[]")
+  fields                  String                 @default("[]")
+  submissions             CustomFormSubmission[]
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
 }
 
 model CustomFormSubmission {
-  id           Int        @id @default(autoincrement())
-  trackingCode String     @unique
-  formId       String
-  form         CustomForm @relation(fields: [formId], references: [id], onDelete: Cascade)
-  data         String     @default("[]")
-  status       String     @default("NEW") // NEW, REVIEWED, ARCHIVED
-  note         String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id              Int                 @id @default(autoincrement())
+  trackingCode    String              @unique
+  formId          String
+  form            CustomForm          @relation(fields: [formId], references: [id], onDelete: Cascade)
+  beneficiaryId   String?
+  beneficiary     BeneficiaryAccount? @relation(fields: [beneficiaryId], references: [id], onDelete: SetNull)
+  data            String              @default("[]")
+  status          String              @default("NEW") // NEW, IN_REVIEW, NEEDS_INFO, APPROVED, REJECTED, REVIEWED, ARCHIVED
+  note            String?
+  expertMessage   String?
+  expertMessageAt DateTime?
+  expertMessageBy String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+}
+
+model BeneficiaryAccount {
+  id          String                 @id @default(cuid())
+  firstName   String                 @default("")
+  lastName    String                 @default("")
+  fullName    String
+  phone       String                 @unique
+  isActive    Boolean                @default(true)
+  submissions CustomFormSubmission[]
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
 }
 
 

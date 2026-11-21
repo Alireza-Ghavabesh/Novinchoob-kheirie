@@ -11,9 +11,14 @@ import {
   Phone,
   MapPin,
   Archive,
+  MessageSquareWarning,
 } from 'lucide-react';
 import { AppConfig, CustomForm } from '../types';
-import { EntityDefinition, parseCustomFormFieldsList } from '../utils/publicFormConfig';
+import {
+  CUSTOM_FORM_STATUS_LABELS,
+  EntityDefinition,
+  parseCustomFormFieldsList,
+} from '../utils/publicFormConfig';
 import { api } from '../services/api';
 import {
   DynamicFieldRenderer,
@@ -54,6 +59,8 @@ export const CustomFormPublicView: React.FC<CustomFormPublicViewProps> = ({ slug
     trackingCode: string;
     status: string;
     note?: string | null;
+    expertMessage?: string | null;
+    expertMessageAt?: string | null;
     createdAt: string;
   } | null>(null);
   const [trackingError, setTrackingError] = useState('');
@@ -258,6 +265,8 @@ export const CustomFormPublicView: React.FC<CustomFormPublicViewProps> = ({ slug
                 values={values}
                 entities={entities}
                 onChange={setValues}
+                maxFileSizeMB={form.maxFileSizeMB || 5}
+                uploadContext={{ formId: form.id, formSlug: form.slug }}
               />
 
               <div className="pt-2">
@@ -324,26 +333,41 @@ export const CustomFormPublicView: React.FC<CustomFormPublicViewProps> = ({ slug
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-slate-500">وضعیت بررسی:</span>
-                    {trackingResult.status === 'REVIEWED' ? (
-                      <span className="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                    <span
+                      className={`inline-flex items-center gap-1 font-bold px-2.5 py-0.5 rounded-full ${
+                        trackingResult.status === 'APPROVED' || trackingResult.status === 'REVIEWED'
+                          ? 'text-emerald-700 bg-emerald-100'
+                          : trackingResult.status === 'NEEDS_INFO'
+                          ? 'text-blue-700 bg-blue-100'
+                          : trackingResult.status === 'REJECTED'
+                          ? 'text-rose-700 bg-rose-100'
+                          : trackingResult.status === 'ARCHIVED'
+                          ? 'text-slate-700 bg-slate-200'
+                          : 'text-amber-700 bg-amber-100'
+                      }`}
+                    >
+                      {trackingResult.status === 'APPROVED' || trackingResult.status === 'REVIEWED' ? (
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        بررسی شده
-                      </span>
-                    ) : trackingResult.status === 'ARCHIVED' ? (
-                      <span className="inline-flex items-center gap-1 font-bold text-slate-700 bg-slate-200 px-2.5 py-0.5 rounded-full">
+                      ) : trackingResult.status === 'ARCHIVED' ? (
                         <Archive className="w-3.5 h-3.5" />
-                        بایگانی شده
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 font-bold text-amber-700 bg-amber-100 px-2.5 py-0.5 rounded-full">
+                      ) : (
                         <Clock className="w-3.5 h-3.5" />
-                        در صف بررسی
-                      </span>
-                    )}
+                      )}
+                      {CUSTOM_FORM_STATUS_LABELS[trackingResult.status] || trackingResult.status}
+                    </span>
                   </div>
                   {trackingResult.note && (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 text-blue-900 text-[11px]">
                       {trackingResult.note}
+                    </div>
+                  )}
+                  {trackingResult.expertMessage && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-amber-950 text-[11px] space-y-1">
+                      <span className="font-bold flex items-center gap-1 text-amber-900">
+                        <MessageSquareWarning className="w-3.5 h-3.5" />
+                        پیغام کارشناس:
+                      </span>
+                      <p className="whitespace-pre-wrap leading-relaxed">{trackingResult.expertMessage}</p>
                     </div>
                   )}
                 </div>

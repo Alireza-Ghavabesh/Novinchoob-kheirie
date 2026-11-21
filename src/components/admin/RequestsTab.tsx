@@ -41,6 +41,7 @@ import {
   Users,
   CreditCard,
   Building,
+  ExternalLink,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -302,6 +303,9 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
           if (cf.type === 'entity_list' && Array.isArray(cf.items)) {
             const subRows = cf.items.map((it, idx) => formatEntityRowSummary(it, idx)).join(' // ');
             return `${cf.label}: [${subRows}]`;
+          }
+          if (cf.type === 'file' && cf.fileUrl) {
+            return `${cf.label}: ${cf.fileName || cf.value} (${cf.fileUrl})`;
           }
           return `${cf.label}: ${cf.value}`;
         })
@@ -882,6 +886,24 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                               </div>
                             )}
                           </div>
+                        ) : item.type === 'file' && item.fileUrl ? (
+                          <div key={item.id} className="bg-white p-2.5 rounded-xl border border-indigo-200 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="text-slate-500 block text-[11px] mb-0.5">{item.label}:</span>
+                              <span className="font-bold text-slate-900 truncate block">
+                                {item.fileName || item.value || 'فایل پیوست'}
+                              </span>
+                            </div>
+                            <a
+                              href={item.fileUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold shrink-0"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>مشاهده</span>
+                            </a>
+                          </div>
                         ) : (
                           <div key={item.id} className="bg-white p-2.5 rounded-xl border border-slate-200/80">
                             <span className="text-slate-500 block text-[11px] mb-0.5">{item.label}:</span>
@@ -1111,6 +1133,8 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                     entities={entities}
                     onChange={setNewCustomValues}
                     compact
+                    maxFileSizeMB={formSchema.maxFileSizeMB || 5}
+                    uploadContext={{ source: 'public_form' }}
                   />
                 </div>
               )}

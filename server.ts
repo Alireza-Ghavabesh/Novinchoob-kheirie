@@ -1,15 +1,26 @@
 import 'dotenv/config';
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
+import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 import { GhasedakSmsService } from './src/services/smsService.ts';
 import { PushNotificationService } from './src/services/pushService.ts';
+import { appendSmsCancellationFooter } from './src/utils/smsFormat.ts';
+import {
+  CUSTOM_FORM_STATUS_LABELS,
+  CustomFormSmsRule,
+  FormSmsEventType,
+  parseCustomFormSmsRules,
+  parsePublicFormSchema,
+} from './src/utils/publicFormConfig.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const UPLOADS_DIR = path.resolve(__dirname, 'prisma', 'uploads');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const prisma = new PrismaClient();
 const smsService = new GhasedakSmsService(prisma);
@@ -212,8 +223,180 @@ function requirePerm(...permKeys: string[]) {
   };
 }
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+function createBeneficiaryToken(beneficiaryId: string, phone: string): string {
+  const exp = Date.now() + 14 * 24 * 60 * 60 * 1000; // 14 days
+  const payload = Buffer.from(
+    JSON.stringify({ kind: 'BENEFICIARY', beneficiaryId, phone, exp })
+  ).toString('base64url');
+  const sig = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifyBeneficiaryToken(
+  token: string
+): { kind: string; beneficiaryId: string; phone: string; exp: number } | null {
+  try {
+    if (!token || !token.includes('.')) return null;
+    const [payload, sig] = token.split('.');
+    const expectedSig = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('base64url');
+    const sigBuf = Buffer.from(sig);
+    const expectedBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      return null;
+    }
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (
+      decoded?.kind !== 'BENEFICIARY' ||
+      !decoded?.beneficiaryId ||
+      !decoded?.exp ||
+      Date.now() > decoded.exp
+    ) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+interface BeneficiaryRequestContext extends express.Request {
+  authBeneficiary?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    fullName: string;
+    phone: string;
+    isActive: boolean;
+  };
+}
+
+async function requireBeneficiaryAuth(
+  req: BeneficiaryRequestContext,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  try {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    const decoded = verifyBeneficiaryToken(token);
+    if (!decoded) {
+      return res.status(401).json({
+        error: 'نشست کاربری مددجو معتبر نیست یا منقضی شده است. لطفاً مجدداً وارد شوید.',
+      });
+    }
+    const account = await prisma.beneficiaryAccount.findUnique({
+      where: { id: decoded.beneficiaryId },
+    });
+    if (!account || !account.isActive) {
+      return res.status(401).json({ error: 'حساب مددجو یافت نشد یا غیرفعال است.' });
+    }
+    req.authBeneficiary = {
+      id: account.id,
+      firstName: account.firstName,
+      lastName: account.lastName,
+      fullName: account.fullName,
+      phone: account.phone,
+      isActive: account.isActive,
+    };
+    next();
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در احراز هویت مددجو', details: String(error) });
+  }
+}
+
+app.use(express.json({ limit: '40mb' }));
+app.use(express.urlencoded({ extended: true, limit: '40mb' }));
+
+// --- File Upload & Safe Serving Endpoints ---
+const BLOCKED_UPLOAD_EXTENSIONS = new Set([
+  '.exe', '.bat', '.cmd', '.sh', '.ps1', '.msi', '.js', '.mjs', '.cjs',
+  '.html', '.htm', '.svg', '.php', '.asp', '.aspx', '.jsp', '.vbs',
+]);
+
+app.post('/api/uploads', async (req, res) => {
+  try {
+    const { fileName, mimeType, dataBase64, formId, formSlug, source } = req.body || {};
+    if (!fileName || !dataBase64) {
+      return res.status(400).json({ error: 'اطلاعات فایل ارسالی ناقص است.' });
+    }
+
+    let maxFileSizeMB = 5;
+    if (formId || formSlug) {
+      const form = await prisma.customForm.findFirst({
+        where: formId ? { id: String(formId) } : { slug: String(formSlug).trim().toLowerCase() },
+        select: { maxFileSizeMB: true },
+      });
+      if (form?.maxFileSizeMB && form.maxFileSizeMB > 0) {
+        maxFileSizeMB = form.maxFileSizeMB;
+      }
+    } else if (source === 'public_form') {
+      const conf = await prisma.appConfig.findUnique({ where: { id: 1 } });
+      const parsedPublic = parsePublicFormSchema(conf?.publicFormConfig);
+      if (parsedPublic.maxFileSizeMB && parsedPublic.maxFileSizeMB > 0) {
+        maxFileSizeMB = parsedPublic.maxFileSizeMB;
+      }
+    }
+    maxFileSizeMB = Math.min(25, Math.max(1, Math.round(maxFileSizeMB)));
+
+    const rawBase64 = String(dataBase64).includes(',')
+      ? String(dataBase64).split(',')[1]
+      : String(dataBase64);
+    const buffer = Buffer.from(rawBase64, 'base64');
+
+    if (!buffer.length) {
+      return res.status(400).json({ error: 'فایل انتخاب‌شده خالی یا نامعتبر است.' });
+    }
+
+    const maxBytes = maxFileSizeMB * 1024 * 1024;
+    if (buffer.length > maxBytes) {
+      const actualMb = (buffer.length / (1024 * 1024)).toFixed(2);
+      return res.status(413).json({
+        error: `حجم فایل (${actualMb} مگابایت) بیشتر از سقف مجاز این فرم (${maxFileSizeMB} مگابایت) است.`,
+      });
+    }
+
+    const originalName = path.basename(String(fileName)).replace(/[^\w.\-\u0600-\u06FF\s]/g, '_') || 'file';
+    const ext = path.extname(originalName).toLowerCase();
+    if (BLOCKED_UPLOAD_EXTENSIONS.has(ext)) {
+      return res.status(400).json({ error: 'پسوند فایل انتخاب‌شده مجاز نیست.' });
+    }
+
+    const safeSavedName = `up-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
+    fs.writeFileSync(path.join(UPLOADS_DIR, safeSavedName), buffer);
+
+    res.json({
+      url: `/api/uploads/${safeSavedName}`,
+      name: originalName,
+      size: buffer.length,
+      mimeType: String(mimeType || 'application/octet-stream'),
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در بارگذاری فایل', details: String(error) });
+  }
+});
+
+app.get('/api/uploads/:filename', (req, res) => {
+  try {
+    const safeName = path.basename(String(req.params.filename || ''));
+    if (!safeName || safeName === '.' || safeName === '..') {
+      return res.status(400).json({ error: 'نام فایل نامعتبر است.' });
+    }
+    const filePath = path.join(UPLOADS_DIR, safeName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'فایل مورد نظر یافت نشد.' });
+    }
+    const ext = path.extname(safeName).toLowerCase();
+    const inlineSafe = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf']);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      inlineSafe.has(ext) ? `inline; filename="${safeName}"` : `attachment; filename="${safeName}"`
+    );
+    res.sendFile(filePath);
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در دریافت فایل', details: String(error) });
+  }
+});
 
 // --- API Endpoints ---
 
@@ -524,7 +707,7 @@ app.post('/api/auth/otp/send', async (req, res) => {
       },
     });
 
-    const messageText = `کد ورود شما به سامانه ${instName}: ${otpCode}\nاعتبار کد: ۲ دقیقه`;
+    const messageText = appendSmsCancellationFooter(`کد ورود شما به سامانه ${instName}: ${otpCode}\nاعتبار کد: ۲ دقیقه`);
     const usePattern = Boolean(smsConf.loginOtpTemplate && smsConf.loginOtpTemplate.trim());
 
     const sendRes = await smsService.sendGhasedak(
@@ -1475,7 +1658,7 @@ app.get('/api/sms/rules', requireAuth, requirePerm('manageSettings'), async (_re
             userFilter: 'ALL',
             targetType: 'BENEFICIARY',
             templateType: 'SIMPLE',
-            messageBody: 'سلام {name} عزیز، درخواست شما در {instName} با کد رهگیری {trackingCode} با موفقیت ثبت شد و در حال بررسی است.',
+            messageBody: appendSmsCancellationFooter('سلام {name} عزیز، درخواست شما در {instName} با کد رهگیری {trackingCode} با موفقیت ثبت شد و در حال بررسی است.'),
             isActive: true,
           },
           {
@@ -1485,7 +1668,7 @@ app.get('/api/sms/rules', requireAuth, requirePerm('manageSettings'), async (_re
             userFilter: 'ALL',
             targetType: 'BENEFICIARY',
             templateType: 'SIMPLE',
-            messageBody: 'متقاضی محترم {name}، درخواست شما با کد {trackingCode} در {instName} به مبلغ {amount} ریال تأیید شد.',
+            messageBody: appendSmsCancellationFooter('متقاضی محترم {name}، درخواست شما با کد {trackingCode} در {instName} به مبلغ {amount} ریال تأیید شد.'),
             isActive: true,
           },
           {
@@ -1495,7 +1678,7 @@ app.get('/api/sms/rules', requireAuth, requirePerm('manageSettings'), async (_re
             userFilter: 'ALL',
             targetType: 'BENEFICIARY',
             templateType: 'SIMPLE',
-            messageBody: 'متقاضی گرامی {name}، پرونده شما با کد رهگیری {trackingCode} جهت تکمیل مدارک بازگردانده شد: {note}',
+            messageBody: appendSmsCancellationFooter('متقاضی گرامی {name}، پرونده شما با کد رهگیری {trackingCode} جهت تکمیل مدارک بازگردانده شد: {note}'),
             isActive: true,
           },
           {
@@ -1505,7 +1688,7 @@ app.get('/api/sms/rules', requireAuth, requirePerm('manageSettings'), async (_re
             userFilter: 'ALL',
             targetType: 'ADMINS',
             templateType: 'SIMPLE',
-            messageBody: 'درخواست مددجویی جدید توسط {name} ثبت شد (کد: {trackingCode}، دسته: {cat}). جهت بررسی وارد اتوماسیون شوید.',
+            messageBody: appendSmsCancellationFooter('درخواست مددجویی جدید توسط {name} ثبت شد (کد: {trackingCode}، دسته: {cat}). جهت بررسی وارد اتوماسیون شوید.'),
             isActive: false,
           },
         ],
@@ -1541,6 +1724,10 @@ app.post('/api/sms/rules', requireAuth, requirePerm('manageSettings'), async (re
       return res.status(400).json({ error: 'عنوان، نوع رویداد و متن پیام الزامی است.' });
     }
 
+    const effectiveTemplateType = templateType || 'SIMPLE';
+    const finalMessageBody =
+      effectiveTemplateType === 'OTP' ? String(messageBody) : appendSmsCancellationFooter(String(messageBody));
+
     const rule = await prisma.smsRule.create({
       data: {
         title,
@@ -1549,12 +1736,12 @@ app.post('/api/sms/rules', requireAuth, requirePerm('manageSettings'), async (re
         userFilter: userFilter || 'ALL',
         targetType: targetType || 'BENEFICIARY',
         customNumbers: customNumbers || '',
-        templateType: templateType || 'SIMPLE',
+        templateType: effectiveTemplateType,
         templateName: templateName || '',
         templateParam1: templateParam1 || '',
         templateParam2: templateParam2 || '',
         templateParam3: templateParam3 || '',
-        messageBody,
+        messageBody: finalMessageBody,
         sendPush: sendPush !== undefined ? Boolean(sendPush) : false,
         isActive: isActive !== undefined ? Boolean(isActive) : true,
       },
@@ -1585,6 +1772,9 @@ app.put('/api/sms/rules/:id', requireAuth, requirePerm('manageSettings'), async 
       isActive,
     } = req.body;
 
+    const existingRule = await prisma.smsRule.findUnique({ where: { id } });
+    const effectiveTemplateType = templateType !== undefined ? templateType : existingRule?.templateType || 'SIMPLE';
+
     const data: any = {};
     if (title !== undefined) data.title = title;
     if (eventType !== undefined) data.eventType = eventType;
@@ -1597,7 +1787,10 @@ app.put('/api/sms/rules/:id', requireAuth, requirePerm('manageSettings'), async 
     if (templateParam1 !== undefined) data.templateParam1 = templateParam1;
     if (templateParam2 !== undefined) data.templateParam2 = templateParam2;
     if (templateParam3 !== undefined) data.templateParam3 = templateParam3;
-    if (messageBody !== undefined) data.messageBody = messageBody;
+    if (messageBody !== undefined) {
+      data.messageBody =
+        effectiveTemplateType === 'OTP' ? String(messageBody) : appendSmsCancellationFooter(String(messageBody));
+    }
     if (sendPush !== undefined) data.sendPush = Boolean(sendPush);
     if (isActive !== undefined) data.isActive = Boolean(isActive);
 
@@ -1651,6 +1844,7 @@ app.post('/api/sms/test', requireAuth, requirePerm('manageSettings'), async (req
       return res.status(400).json({ error: 'شماره گیرنده و متن پیام الزامی است.' });
     }
 
+    const finalMessage = appendSmsCancellationFooter(String(message));
     const conf = await prisma.smsConfig.findUnique({ where: { id: 1 } });
     let result: any;
     if (!conf?.apiKey || conf.apiKey.trim() === '') {
@@ -1659,7 +1853,7 @@ app.post('/api/sms/test', requireAuth, requirePerm('manageSettings'), async (req
         messageId: 'TEST-SIMULATED-' + Math.floor(1000 + Math.random() * 9000),
       };
     } else {
-      result = await smsService.sendGhasedak(conf.apiKey, conf.senderLine, receptor, message);
+      result = await smsService.sendGhasedak(conf.apiKey, conf.senderLine, receptor, finalMessage);
     }
 
     await prisma.smsLog.create({
@@ -1667,7 +1861,7 @@ app.post('/api/sms/test', requireAuth, requirePerm('manageSettings'), async (req
         ruleTitle: 'ارسال آزمایشی دستی',
         eventType: 'MANUAL_TEST',
         receptor,
-        message,
+        message: finalMessage,
         status: result.success ? (conf?.apiKey ? 'SUCCESS' : 'SIMULATED') : 'FAILED',
         providerMsgId: result.messageId || null,
         errorDetails: result.error || null,
@@ -1797,6 +1991,16 @@ function formatEntityRecord(ent: any) {
   };
 }
 
+function normalizeFormSmsRules(raw: any): CustomFormSmsRule[] {
+  return parseCustomFormSmsRules(raw).map((rule) => ({
+    ...rule,
+    messageBody:
+      rule.templateType === 'OTP'
+        ? rule.messageBody
+        : appendSmsCancellationFooter(rule.messageBody),
+  }));
+}
+
 function formatCustomFormRecord(form: any) {
   return {
     id: form.id,
@@ -1809,11 +2013,222 @@ function formatCustomFormRecord(form: any) {
     successMessage: form.successMessage || 'اطلاعات شما با موفقیت در سیستم ثبت گردید.',
     isActive: form.isActive !== false,
     showTracking: form.showTracking !== false,
+    showInBeneficiaryPortal: Boolean(form.showInBeneficiaryPortal),
+    maxFileSizeMB:
+      typeof form.maxFileSizeMB === 'number' && form.maxFileSizeMB > 0
+        ? form.maxFileSizeMB
+        : 5,
+    smsRules: parseCustomFormSmsRules(form.smsRules),
     fields: safeJsonParseArray(form.fields),
     submissionsCount: form._count?.submissions ?? undefined,
     createdAt: form.createdAt,
     updatedAt: form.updatedAt,
   };
+}
+
+function formatCustomFormSubmissionRecord(sub: any) {
+  return {
+    ...sub,
+    data: safeJsonParseArray(sub.data),
+    beneficiary: sub.beneficiary
+      ? {
+          id: sub.beneficiary.id,
+          firstName: sub.beneficiary.firstName,
+          lastName: sub.beneficiary.lastName,
+          fullName: sub.beneficiary.fullName,
+          phone: sub.beneficiary.phone,
+        }
+      : null,
+  };
+}
+
+function extractIranMobilesFromText(raw: string): string[] {
+  if (!raw) return [];
+  return String(raw)
+    .split(/[,;،|\n]+/)
+    .map((part) => normalizeIranMobile(part))
+    .filter((p) => isValidIranMobile(p));
+}
+
+function resolveFormSmsPlaceholders(
+  template: string,
+  ctx: {
+    formTitle: string;
+    trackingCode: string;
+    status: string;
+    expertMessage?: string | null;
+    note?: string | null;
+    instName: string;
+    accountName?: string;
+    accountPhone?: string;
+    submittedData: any[];
+  }
+): string {
+  let msg = String(template || '');
+  const statusText = CUSTOM_FORM_STATUS_LABELS[ctx.status] || ctx.status || 'جدید';
+  const baseReplacements: Record<string, string> = {
+    '{accountName}': ctx.accountName || '',
+    '{name}': ctx.accountName || '',
+    '{accountPhone}': ctx.accountPhone || '',
+    '{phone}': ctx.accountPhone || '',
+    '{formTitle}': ctx.formTitle || '',
+    '{trackingCode}': ctx.trackingCode || '',
+    '{status}': statusText,
+    '{expertMessage}': ctx.expertMessage || ctx.note || '',
+    '{note}': ctx.note || ctx.expertMessage || '',
+    '{instName}': ctx.instName || 'مؤسسه خیریه',
+    '{date}': new Date().toLocaleDateString('fa-IR'),
+    '{time}': new Date().toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }),
+  };
+
+  for (const [key, val] of Object.entries(baseReplacements)) {
+    msg = msg.split(key).join(val);
+  }
+
+  // Replace dynamic form field placeholders like {field:cf_1234}
+  for (const item of ctx.submittedData || []) {
+    if (!item?.id) continue;
+    const token = `{field:${item.id}}`;
+    if (msg.includes(token)) {
+      msg = msg.split(token).join(String(item.value ?? ''));
+    }
+  }
+  // Strip any unresolved {field:...} placeholders cleanly
+  msg = msg.replace(/\{field:[^}]+\}/g, '');
+  return msg;
+}
+
+async function fireCustomFormSmsRules(params: {
+  form: any;
+  submission: any;
+  beneficiary?: { id: string; fullName: string; phone: string } | null;
+  submittedData: any[];
+  events: FormSmsEventType[];
+}): Promise<number> {
+  let dispatched = 0;
+  try {
+    const smsConfig = await prisma.smsConfig.findUnique({ where: { id: 1 } });
+    if (!smsConfig || !smsConfig.isEnabled) {
+      return 0;
+    }
+    const rules = parseCustomFormSmsRules(params.form?.smsRules);
+    if (rules.length === 0) return 0;
+
+    const appConf = await prisma.appConfig.findUnique({ where: { id: 1 } });
+    const instName = appConf?.instName || 'مؤسسه خیریه';
+
+    for (const rule of rules) {
+      if (!rule.isActive) continue;
+      if (!params.events.includes(rule.eventType)) continue;
+      if (
+        rule.eventType === 'FORM_STATUS_CHANGED' &&
+        rule.triggerStatus &&
+        rule.triggerStatus !== 'ALL' &&
+        rule.triggerStatus !== params.submission.status
+      ) {
+        continue;
+      }
+
+      const recipientSet = new Set<string>();
+
+      // 1. Account mobile of logged-in beneficiary
+      if (rule.useAccountPhone && params.beneficiary?.phone) {
+        const p = normalizeIranMobile(params.beneficiary.phone);
+        if (isValidIranMobile(p)) recipientSet.add(p);
+      }
+
+      // 2. Mobile number(s) entered inside selected form fields (e.g. third-party submissions)
+      if (rule.useFormPhoneFields) {
+        const selectedIds = Array.isArray(rule.formPhoneFieldIds) ? rule.formPhoneFieldIds : [];
+        for (const item of params.submittedData || []) {
+          const matchesId = selectedIds.length > 0 ? selectedIds.includes(String(item.id)) : item.type === 'phone';
+          if (matchesId && item.value) {
+            for (const p of extractIranMobilesFromText(String(item.value))) {
+              recipientSet.add(p);
+            }
+          }
+        }
+      }
+
+      // 3. Admins / institution phone
+      if (rule.useAdmins && appConf?.phone) {
+        for (const p of extractIranMobilesFromText(appConf.phone)) {
+          recipientSet.add(p);
+        }
+      }
+
+      // 4. Custom numbers
+      if (rule.customNumbers) {
+        for (const p of extractIranMobilesFromText(rule.customNumbers)) {
+          recipientSet.add(p);
+        }
+      }
+
+      const recipients = Array.from(recipientSet);
+      if (recipients.length === 0) continue;
+
+      const placeholderCtx = {
+        formTitle: params.form.title,
+        trackingCode: params.submission.trackingCode,
+        status: params.submission.status,
+        expertMessage: params.submission.expertMessage,
+        note: params.submission.note,
+        instName,
+        accountName: params.beneficiary?.fullName || '',
+        accountPhone: params.beneficiary?.phone || '',
+        submittedData: params.submittedData,
+      };
+
+      const rawMsg = resolveFormSmsPlaceholders(rule.messageBody, placeholderCtx);
+      const isOtpPattern = rule.templateType === 'OTP' && Boolean(rule.templateName?.trim());
+      const finalMsg = isOtpPattern ? rawMsg : appendSmsCancellationFooter(rawMsg);
+
+      const param1 = rule.templateParam1 ? resolveFormSmsPlaceholders(rule.templateParam1, placeholderCtx) : undefined;
+      const param2 = rule.templateParam2 ? resolveFormSmsPlaceholders(rule.templateParam2, placeholderCtx) : undefined;
+      const param3 = rule.templateParam3 ? resolveFormSmsPlaceholders(rule.templateParam3, placeholderCtx) : undefined;
+
+      for (const phone of recipients) {
+        let sendRes: { success: boolean; messageId?: string; cost?: number; error?: string };
+        if (!smsConfig.apiKey || smsConfig.apiKey.trim() === '' || smsConfig.apiKey === 'DEMO_KEY') {
+          sendRes = {
+            success: true,
+            messageId: 'SIMULATED-' + Math.floor(100000 + Math.random() * 900000),
+          };
+        } else {
+          sendRes = await smsService.sendGhasedak(
+            smsConfig.apiKey,
+            smsConfig.senderLine,
+            phone,
+            finalMsg,
+            {
+              templateType: rule.templateType,
+              templateName: rule.templateName,
+              param1,
+              param2,
+              param3,
+            }
+          );
+        }
+
+        await prisma.smsLog.create({
+          data: {
+            ruleTitle: `[${params.form.title}] ${rule.title}`,
+            eventType: rule.eventType,
+            receptor: phone,
+            message: finalMsg,
+            status: sendRes.success ? (smsConfig.apiKey ? 'SUCCESS' : 'SIMULATED') : 'FAILED',
+            providerMsgId: sendRes.messageId || null,
+            cost: sendRes.cost || null,
+            errorDetails: sendRes.error || null,
+          },
+        });
+        if (sendRes.success) dispatched++;
+      }
+    }
+  } catch (err) {
+    console.error('Error firing custom form SMS rules:', err);
+  }
+  return dispatched;
 }
 
 function sanitizeFormSlug(rawSlug: string): string {
@@ -1987,6 +2402,9 @@ app.post('/api/forms', requireAuth, requirePerm('manageSettings'), async (req, r
       successMessage,
       isActive,
       showTracking,
+      showInBeneficiaryPortal,
+      maxFileSizeMB,
+      smsRules,
       fields,
     } = req.body;
     if (!title || !String(title).trim()) {
@@ -2001,6 +2419,11 @@ app.post('/api/forms', requireAuth, requirePerm('manageSettings'), async (req, r
       cleanSlug = `${cleanSlug}-${Math.floor(100 + Math.random() * 900)}`;
     }
 
+    const safeMaxMb =
+      typeof maxFileSizeMB === 'number' && maxFileSizeMB > 0
+        ? Math.min(25, Math.max(1, Math.round(maxFileSizeMB)))
+        : 5;
+
     const created = await prisma.customForm.create({
       data: {
         slug: cleanSlug,
@@ -2012,6 +2435,9 @@ app.post('/api/forms', requireAuth, requirePerm('manageSettings'), async (req, r
         successMessage: String(successMessage || 'اطلاعات شما با موفقیت در سیستم ثبت گردید.').trim(),
         isActive: isActive !== false,
         showTracking: showTracking !== false,
+        showInBeneficiaryPortal: Boolean(showInBeneficiaryPortal),
+        maxFileSizeMB: safeMaxMb,
+        smsRules: JSON.stringify(normalizeFormSmsRules(smsRules)),
         fields: JSON.stringify(Array.isArray(fields) ? fields : []),
       },
       include: { _count: { select: { submissions: true } } },
@@ -2035,6 +2461,9 @@ app.put('/api/forms/:id', requireAuth, requirePerm('manageSettings'), async (req
       successMessage,
       isActive,
       showTracking,
+      showInBeneficiaryPortal,
+      maxFileSizeMB,
+      smsRules,
       fields,
     } = req.body;
 
@@ -2047,6 +2476,17 @@ app.put('/api/forms/:id', requireAuth, requirePerm('manageSettings'), async (req
     if (successMessage !== undefined) data.successMessage = String(successMessage).trim();
     if (isActive !== undefined) data.isActive = Boolean(isActive);
     if (showTracking !== undefined) data.showTracking = Boolean(showTracking);
+    if (showInBeneficiaryPortal !== undefined) {
+      data.showInBeneficiaryPortal = Boolean(showInBeneficiaryPortal);
+    }
+    if (maxFileSizeMB !== undefined) {
+      const parsedMb = Number(maxFileSizeMB);
+      data.maxFileSizeMB =
+        !Number.isNaN(parsedMb) && parsedMb > 0 ? Math.min(25, Math.max(1, Math.round(parsedMb))) : 5;
+    }
+    if (smsRules !== undefined) {
+      data.smsRules = JSON.stringify(normalizeFormSmsRules(smsRules));
+    }
     if (fields !== undefined) data.fields = JSON.stringify(Array.isArray(fields) ? fields : []);
 
     if (slug !== undefined && String(slug).trim()) {
@@ -2103,6 +2543,14 @@ app.post('/api/forms/public/:slug/submit', async (req, res) => {
       },
     });
 
+    fireCustomFormSmsRules({
+      form,
+      submission: created,
+      beneficiary: null,
+      submittedData,
+      events: ['FORM_SUBMITTED'],
+    }).catch((err) => console.error('Public form SMS trigger error:', err));
+
     res.json({
       id: created.id,
       trackingCode: created.trackingCode,
@@ -2133,7 +2581,11 @@ app.get('/api/forms/public/:slug/track/:code', async (req, res) => {
         trackingCode: true,
         status: true,
         note: true,
+        expertMessage: true,
+        expertMessageAt: true,
+        expertMessageBy: true,
         createdAt: true,
+        updatedAt: true,
       },
     });
     if (!sub) {
@@ -2145,52 +2597,459 @@ app.get('/api/forms/public/:slug/track/:code', async (req, res) => {
   }
 });
 
-app.get('/api/forms/:id/submissions', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.get(
+  '/api/forms/:id/submissions',
+  requireAuth,
+  requirePerm('manageSettings', 'viewInbox', 'decideInbox'),
+  async (req, res) => {
+    try {
+      const subs = await prisma.customFormSubmission.findMany({
+        where: { formId: req.params.id },
+        include: { beneficiary: true },
+        orderBy: { id: 'desc' },
+      });
+      res.json(subs.map(formatCustomFormSubmissionRecord));
+    } catch (error) {
+      res.status(500).json({ error: 'خطا در دریافت پاسخ‌های فرم', details: String(error) });
+    }
+  }
+);
+
+app.patch(
+  '/api/forms/submissions/:submissionId',
+  requireAuth,
+  requirePerm('manageSettings', 'viewInbox', 'decideInbox'),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const id = parseInt(req.params.submissionId);
+      const { status, note, expertMessage, sendSms } = req.body;
+
+      const existing = await prisma.customFormSubmission.findUnique({
+        where: { id },
+        include: { form: true, beneficiary: true },
+      });
+      if (!existing) {
+        return res.status(404).json({ error: 'رکورد مورد نظر یافت نشد.' });
+      }
+
+      const data: any = {};
+      if (status) data.status = String(status);
+      if (note !== undefined) data.note = note;
+      if (expertMessage !== undefined) {
+        const cleanMsg = String(expertMessage || '').trim();
+        data.expertMessage = cleanMsg || null;
+        if (cleanMsg) {
+          data.expertMessageAt = new Date();
+          data.expertMessageBy = req.authUser?.name || req.authUser?.username || 'کارشناس';
+        }
+      }
+
+      const updated = await prisma.customFormSubmission.update({
+        where: { id },
+        data,
+        include: { form: true, beneficiary: true },
+      });
+
+      const events: FormSmsEventType[] = [];
+      const cleanNewExpertMsg = String(updated.expertMessage || '').trim();
+      const prevExpertMsg = String(existing.expertMessage || '').trim();
+      if (cleanNewExpertMsg && (cleanNewExpertMsg !== prevExpertMsg || sendSms === true)) {
+        events.push('EXPERT_MESSAGE_ADDED');
+      }
+      if (updated.status !== existing.status) {
+        events.push('FORM_STATUS_CHANGED');
+      }
+
+      let dispatchedSmsCount = 0;
+      if (events.length > 0 && sendSms !== false) {
+        dispatchedSmsCount = await fireCustomFormSmsRules({
+          form: updated.form,
+          submission: updated,
+          beneficiary: updated.beneficiary,
+          submittedData: safeJsonParseArray(updated.data),
+          events,
+        });
+      }
+
+      res.json({
+        ...formatCustomFormSubmissionRecord(updated),
+        dispatchedSmsCount,
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'خطا در به‌روزرسانی وضعیت پاسخ', details: String(error) });
+    }
+  }
+);
+
+app.delete(
+  '/api/forms/submissions/:submissionId',
+  requireAuth,
+  requirePerm('manageSettings', 'decideInbox'),
+  async (req, res) => {
+    try {
+      const id = parseInt(req.params.submissionId);
+      await prisma.customFormSubmission.delete({ where: { id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: 'خطا در حذف پاسخ فرم', details: String(error) });
+    }
+  }
+);
+
+// --- Beneficiary Portal & OTP Auth Endpoints ---
+app.post('/api/beneficiary/auth/otp/send', async (req, res) => {
   try {
-    const subs = await prisma.customFormSubmission.findMany({
-      where: { formId: req.params.id },
-      orderBy: { id: 'desc' },
+    const firstName = String(req.body?.firstName || '').trim();
+    const lastName = String(req.body?.lastName || '').trim();
+    const cleanPhone = normalizeIranMobile(String(req.body?.phone || ''));
+
+    if (!firstName || !lastName) {
+      return res.status(400).json({ error: 'لطفاً نام و نام خانوادگی خود را به صورت کامل وارد نمایید.' });
+    }
+    if (!isValidIranMobile(cleanPhone)) {
+      return res.status(400).json({ error: 'شماره همراه واردشده معتبر نیست (مثال: 09123456789).' });
+    }
+
+    const lastOtp = await prisma.otpCode.findFirst({
+      where: { phone: cleanPhone, purpose: 'BENEFICIARY_LOGIN', used: false },
+      orderBy: { createdAt: 'desc' },
     });
-    res.json(
-      subs.map((s) => ({
-        ...s,
-        data: safeJsonParseArray(s.data),
-      }))
+    if (lastOtp) {
+      const elapsedSec = Math.floor((Date.now() - lastOtp.createdAt.getTime()) / 1000);
+      if (elapsedSec < 60 && lastOtp.expiresAt > new Date()) {
+        const waitSec = 60 - elapsedSec;
+        return res.status(429).json({
+          error: `لطفاً ${waitSec} ثانیه دیگر برای درخواست مجدد کد صبر کنید.`,
+          retryAfter: waitSec,
+        });
+      }
+    }
+
+    const smsConf = await prisma.smsConfig.findUnique({ where: { id: 1 } });
+    const appConf = await prisma.appConfig.findUnique({ where: { id: 1 } });
+    const instName = appConf?.instName || 'مؤسسه خیریه';
+
+    const otpCode = String(crypto.randomInt(100000, 999999));
+    const expiresAt = new Date(Date.now() + 120 * 1000);
+
+    await prisma.otpCode.updateMany({
+      where: { phone: cleanPhone, purpose: 'BENEFICIARY_LOGIN', used: false },
+      data: { used: true },
+    });
+
+    const createdOtp = await prisma.otpCode.create({
+      data: {
+        phone: cleanPhone,
+        code: otpCode,
+        purpose: 'BENEFICIARY_LOGIN',
+        expiresAt,
+      },
+    });
+
+    const messageText = appendSmsCancellationFooter(
+      `${firstName} ${lastName} گرامی، کد تایید ورود به پروفایل مددجو در ${instName}: ${otpCode}\nاعتبار کد: ۲ دقیقه`
     );
-  } catch (error) {
-    res.status(500).json({ error: 'خطا در دریافت پاسخ‌های فرم', details: String(error) });
-  }
-});
 
-app.patch('/api/forms/submissions/:submissionId', requireAuth, requirePerm('manageSettings'), async (req, res) => {
-  try {
-    const id = parseInt(req.params.submissionId);
-    const { status, note } = req.body;
-    const data: any = {};
-    if (status) data.status = String(status);
-    if (note !== undefined) data.note = note;
-    const updated = await prisma.customFormSubmission.update({
-      where: { id },
-      data,
+    const hasApiKey = Boolean(smsConf?.isEnabled && smsConf?.apiKey?.trim() && smsConf.apiKey.trim() !== 'DEMO_KEY');
+    const usePattern = hasApiKey && Boolean(smsConf?.loginOtpTemplate && smsConf.loginOtpTemplate.trim());
+
+    let sendRes: { success: boolean; messageId?: string; cost?: number; error?: string };
+    let simulated = false;
+
+    if (!hasApiKey) {
+      simulated = true;
+      sendRes = {
+        success: true,
+        messageId: 'SIMULATED-OTP-' + Math.floor(100000 + Math.random() * 900000),
+      };
+    } else {
+      sendRes = await smsService.sendGhasedak(
+        smsConf!.apiKey,
+        smsConf!.senderLine,
+        cleanPhone,
+        messageText,
+        usePattern
+          ? {
+              templateType: 'OTP',
+              templateName: smsConf!.loginOtpTemplate.trim(),
+              param1: otpCode,
+            }
+          : undefined
+      );
+    }
+
+    await prisma.smsLog.create({
+      data: {
+        ruleTitle: 'ورود مددجو به پروفایل (OTP)',
+        eventType: 'BENEFICIARY_LOGIN_OTP',
+        receptor: cleanPhone,
+        message: usePattern ? `ارسال کد تایید مددجو با الگوی ${smsConf!.loginOtpTemplate}` : messageText,
+        status: sendRes.success ? (simulated ? 'SIMULATED' : 'SUCCESS') : 'FAILED',
+        providerMsgId: sendRes.messageId || null,
+        cost: sendRes.cost || null,
+        errorDetails: sendRes.error || null,
+      },
     });
+
+    if (!sendRes.success) {
+      await prisma.otpCode.update({ where: { id: createdOtp.id }, data: { used: true } });
+      return res.status(502).json({
+        error: `خطا در ارسال پیامک کد تایید: ${sendRes.error || 'خطای ارتباط با پنل قاصدک'}`,
+      });
+    }
+
     res.json({
-      ...updated,
-      data: safeJsonParseArray(updated.data),
+      success: true,
+      expiresIn: 120,
+      maskedPhone: maskPhone(cleanPhone),
+      ...(simulated ? { simulated: true, previewCode: otpCode } : {}),
     });
   } catch (error) {
-    res.status(500).json({ error: 'خطا در به‌روزرسانی وضعیت پاسخ', details: String(error) });
+    res.status(500).json({ error: 'خطا در ارسال کد تایید مددجو', details: String(error) });
   }
 });
 
-app.delete('/api/forms/submissions/:submissionId', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.post('/api/beneficiary/auth/otp/verify', async (req, res) => {
   try {
-    const id = parseInt(req.params.submissionId);
-    await prisma.customFormSubmission.delete({ where: { id } });
-    res.json({ success: true });
+    const firstName = String(req.body?.firstName || '').trim();
+    const lastName = String(req.body?.lastName || '').trim();
+    const cleanPhone = normalizeIranMobile(String(req.body?.phone || ''));
+    const cleanCode = normalizeDigits(String(req.body?.code || '')).trim();
+
+    if (!firstName || !lastName) {
+      return res.status(400).json({ error: 'نام و نام خانوادگی الزامی است.' });
+    }
+    if (!isValidIranMobile(cleanPhone)) {
+      return res.status(400).json({ error: 'شماره همراه معتبر نیست.' });
+    }
+    if (!/^\d{4,8}$/.test(cleanCode)) {
+      return res.status(400).json({ error: 'کد تایید واردشده معتبر نیست.' });
+    }
+
+    const otpRecord = await prisma.otpCode.findFirst({
+      where: { phone: cleanPhone, purpose: 'BENEFICIARY_LOGIN', used: false },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!otpRecord) {
+      return res.status(401).json({ error: 'کد تایید فعالی یافت نشد. لطفاً مجدداً درخواست کد دهید.' });
+    }
+    if (otpRecord.expiresAt < new Date()) {
+      await prisma.otpCode.update({ where: { id: otpRecord.id }, data: { used: true } });
+      return res.status(401).json({ error: 'اعتبار کد تایید به پایان رسیده است. لطفاً کد جدید دریافت کنید.' });
+    }
+    if (otpRecord.attempts >= 5) {
+      await prisma.otpCode.update({ where: { id: otpRecord.id }, data: { used: true } });
+      return res.status(429).json({ error: 'تعداد تلاش‌های ناموفق بیش از حد مجاز است. لطفاً کد جدید دریافت کنید.' });
+    }
+    if (otpRecord.code !== cleanCode) {
+      await prisma.otpCode.update({
+        where: { id: otpRecord.id },
+        data: { attempts: { increment: 1 } },
+      });
+      return res.status(401).json({ error: 'کد تایید واردشده صحیح نیست.' });
+    }
+
+    await prisma.otpCode.update({ where: { id: otpRecord.id }, data: { used: true } });
+
+    const fullName = `${firstName} ${lastName}`.trim();
+    const account = await prisma.beneficiaryAccount.upsert({
+      where: { phone: cleanPhone },
+      update: { firstName, lastName, fullName },
+      create: { firstName, lastName, fullName, phone: cleanPhone, isActive: true },
+    });
+
+    if (!account.isActive) {
+      return res.status(403).json({ error: 'حساب کاربری شما غیرفعال شده است.' });
+    }
+
+    const token = createBeneficiaryToken(account.id, account.phone);
+    res.json({
+      beneficiary: {
+        id: account.id,
+        firstName: account.firstName,
+        lastName: account.lastName,
+        fullName: account.fullName,
+        phone: account.phone,
+        isActive: account.isActive,
+      },
+      token,
+    });
   } catch (error) {
-    res.status(500).json({ error: 'خطا در حذف پاسخ فرم', details: String(error) });
+    res.status(500).json({ error: 'خطا در تایید کد ورود مددجو', details: String(error) });
   }
 });
+
+app.get('/api/beneficiary/auth/me', requireBeneficiaryAuth, async (req: BeneficiaryRequestContext, res) => {
+  res.json({ beneficiary: req.authBeneficiary });
+});
+
+app.get('/api/beneficiary/portal', requireBeneficiaryAuth, async (req: BeneficiaryRequestContext, res) => {
+  try {
+    const beneficiary = req.authBeneficiary!;
+    const [forms, submissions] = await Promise.all([
+      prisma.customForm.findMany({
+        where: { isActive: true, showInBeneficiaryPortal: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.customFormSubmission.findMany({
+        where: { beneficiaryId: beneficiary.id },
+        orderBy: { updatedAt: 'desc' },
+      }),
+    ]);
+
+    const subMap = new Map<string, any>();
+    for (const s of submissions) {
+      if (!subMap.has(s.formId)) {
+        subMap.set(s.formId, formatCustomFormSubmissionRecord(s));
+      }
+    }
+
+    res.json({
+      beneficiary,
+      items: forms.map((f) => ({
+        form: formatCustomFormRecord(f),
+        submission: subMap.get(f.id) || null,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در دریافت اطلاعات پروفایل مددجو', details: String(error) });
+  }
+});
+
+app.post(
+  '/api/beneficiary/forms/:formId/submit',
+  requireBeneficiaryAuth,
+  async (req: BeneficiaryRequestContext, res) => {
+    try {
+      const beneficiary = req.authBeneficiary!;
+      const form = await prisma.customForm.findUnique({ where: { id: req.params.formId } });
+      if (!form || !form.isActive || !form.showInBeneficiaryPortal) {
+        return res.status(404).json({ error: 'این فرم در پروفایل مددجو در دسترس نیست.' });
+      }
+
+      const submittedData = Array.isArray(req.body?.data) ? req.body.data : [];
+      const existing = await prisma.customFormSubmission.findFirst({
+        where: { formId: form.id, beneficiaryId: beneficiary.id },
+        orderBy: { id: 'desc' },
+      });
+
+      if (existing) {
+        const nextStatus = existing.status === 'NEEDS_INFO' ? 'IN_REVIEW' : existing.status;
+        const updated = await prisma.customFormSubmission.update({
+          where: { id: existing.id },
+          data: {
+            data: JSON.stringify(submittedData),
+            status: nextStatus,
+          },
+        });
+
+        fireCustomFormSmsRules({
+          form,
+          submission: updated,
+          beneficiary,
+          submittedData,
+          events: ['FORM_UPDATED'],
+        }).catch((err) => console.error('Beneficiary form update SMS trigger error:', err));
+
+        return res.json(formatCustomFormSubmissionRecord(updated));
+      }
+
+      const shamsiYear = new Date().getFullYear() - 621;
+      const count = await prisma.customFormSubmission.count();
+      const trackingCode = `FRM-${shamsiYear}-${1001 + count + Math.floor(Math.random() * 90)}`;
+
+      const created = await prisma.customFormSubmission.create({
+        data: {
+          trackingCode,
+          formId: form.id,
+          beneficiaryId: beneficiary.id,
+          data: JSON.stringify(submittedData),
+          status: 'NEW',
+        },
+      });
+
+      fireCustomFormSmsRules({
+        form,
+        submission: created,
+        beneficiary,
+        submittedData,
+        events: ['FORM_SUBMITTED'],
+      }).catch((err) => console.error('Beneficiary form submit SMS trigger error:', err));
+
+      res.json(formatCustomFormSubmissionRecord(created));
+    } catch (error) {
+      res.status(500).json({ error: 'خطا در ثبت فرم مددجو', details: String(error) });
+    }
+  }
+);
+
+app.put(
+  '/api/beneficiary/forms/:formId/submit',
+  requireBeneficiaryAuth,
+  async (req: BeneficiaryRequestContext, res) => {
+    try {
+      const beneficiary = req.authBeneficiary!;
+      const form = await prisma.customForm.findUnique({ where: { id: req.params.formId } });
+      if (!form || !form.isActive || !form.showInBeneficiaryPortal) {
+        return res.status(404).json({ error: 'این فرم در پروفایل مددجو در دسترس نیست.' });
+      }
+
+      const submittedData = Array.isArray(req.body?.data) ? req.body.data : [];
+      const existing = await prisma.customFormSubmission.findFirst({
+        where: { formId: form.id, beneficiaryId: beneficiary.id },
+        orderBy: { id: 'desc' },
+      });
+
+      if (!existing) {
+        const shamsiYear = new Date().getFullYear() - 621;
+        const count = await prisma.customFormSubmission.count();
+        const trackingCode = `FRM-${shamsiYear}-${1001 + count + Math.floor(Math.random() * 90)}`;
+
+        const created = await prisma.customFormSubmission.create({
+          data: {
+            trackingCode,
+            formId: form.id,
+            beneficiaryId: beneficiary.id,
+            data: JSON.stringify(submittedData),
+            status: 'NEW',
+          },
+        });
+
+        fireCustomFormSmsRules({
+          form,
+          submission: created,
+          beneficiary,
+          submittedData,
+          events: ['FORM_SUBMITTED'],
+        }).catch((err) => console.error('Beneficiary form submit SMS trigger error:', err));
+
+        return res.json(formatCustomFormSubmissionRecord(created));
+      }
+
+      const nextStatus = existing.status === 'NEEDS_INFO' ? 'IN_REVIEW' : existing.status;
+      const updated = await prisma.customFormSubmission.update({
+        where: { id: existing.id },
+        data: {
+          data: JSON.stringify(submittedData),
+          status: nextStatus,
+        },
+      });
+
+      fireCustomFormSmsRules({
+        form,
+        submission: updated,
+        beneficiary,
+        submittedData,
+        events: ['FORM_UPDATED'],
+      }).catch((err) => console.error('Beneficiary form update SMS trigger error:', err));
+
+      res.json(formatCustomFormSubmissionRecord(updated));
+    } catch (error) {
+      res.status(500).json({ error: 'خطا در ویرایش فرم مددجو', details: String(error) });
+    }
+  }
+);
 
 // Vite Middleware or Static Production Serving
 async function startServer() {

@@ -1,5 +1,7 @@
 import {
   AppConfig,
+  BeneficiaryAccount,
+  BeneficiaryPortalFormItem,
   BeneficiaryRequest,
   Category,
   CustomForm,
@@ -15,8 +17,10 @@ import {
 import { EntityDefinition, SubmittedCustomFieldValue } from '../utils/publicFormConfig';
 
 const AUTH_TOKEN_KEY = 'OM_CHARITY_AUTH_TOKEN';
+export const BENEFICIARY_TOKEN_KEY = 'OM_CHARITY_BENEFICIARY_TOKEN';
 
 let unauthorizedHandler: (() => void) | null = null;
+let beneficiaryUnauthorizedHandler: (() => void) | null = null;
 
 async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const token = typeof window !== 'undefined' ? localStorage.getItem(AUTH_TOKEN_KEY) : null;
@@ -27,6 +31,25 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
   const res = await fetch(url, { ...options, headers });
   if (res.status === 401) {
     unauthorizedHandler?.();
+  }
+  return res;
+}
+
+async function beneficiaryAuthFetch(
+  url: string,
+  options: RequestInit = {},
+  explicitToken?: string
+): Promise<Response> {
+  const token =
+    explicitToken ||
+    (typeof window !== 'undefined' ? localStorage.getItem(BENEFICIARY_TOKEN_KEY) : null);
+  const headers = new Headers(options.headers || {});
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401 && !explicitToken) {
+    beneficiaryUnauthorizedHandler?.();
   }
   return res;
 }
@@ -48,6 +71,9 @@ async function parseJsonOrThrow<T>(res: Response, fallbackMessage: string): Prom
 export const api = {
   setUnauthorizedHandler: (handler: (() => void) | null) => {
     unauthorizedHandler = handler;
+  },
+  setBeneficiaryUnauthorizedHandler: (handler: (() => void) | null) => {
+    beneficiaryUnauthorizedHandler = handler;
   },
 
   // Config
@@ -454,7 +480,15 @@ export const api = {
   trackFormSubmission: async (
     slug: string,
     code: string
-  ): Promise<{ trackingCode: string; status: string; note?: string | null; createdAt: string }> => {
+  ): Promise<{
+    trackingCode: string;
+    status: string;
+    note?: string | null;
+    expertMessage?: string | null;
+    expertMessageAt?: string | null;
+    expertMessageBy?: string | null;
+    createdAt: string;
+  }> => {
     const res = await fetch(
       `/api/forms/public/${encodeURIComponent(slug)}/track/${encodeURIComponent(code)}`
     );
@@ -466,7 +500,12 @@ export const api = {
   },
   updateFormSubmission: async (
     submissionId: number,
-    data: { status?: string; note?: string | null }
+    data: {
+      status?: string;
+      note?: string | null;
+      expertMessage?: string | null;
+      sendSms?: boolean;
+    }
   ): Promise<CustomFormSubmission> => {
     const res = await authFetch(`/api/forms/submissions/${submissionId}`, {
       method: 'PATCH',
@@ -478,6 +517,91 @@ export const api = {
   deleteFormSubmission: async (submissionId: number): Promise<void> => {
     const res = await authFetch(`/api/forms/submissions/${submissionId}`, { method: 'DELETE' });
     await parseJsonOrThrow(res, 'خطا در حذف پاسخ');
+  },
+
+  // File Upload
+  uploadFile: async (
+    file: File,
+    context?: { formId?: string; formSlug?: string; source?: string }
+  ): Promise<{ url: string; name: string; size: number; mimeType: string }> => {
+    const dataBase64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('خطا در خواندن فایل انتخاب‌شده'));
+      reader.readAsDataURL(file);
+    });
+    const res = await fetch('/api/uploads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        dataBase64,
+        formId: context?.formId,
+        formSlug: context?.formSlug,
+        source: context?.source,
+      }),
+    });
+    return parseJsonOrThrow(res, 'خطا در بارگذاری فایل');
+  },
+
+  // Beneficiary OTP Auth & Profile Portal
+  sendBeneficiaryOtp: async (data: {
+    firstName: string;
+    lastName: string;
+    phone: string;
+  }): Promise<{
+    success: boolean;
+    expiresIn: number;
+    maskedPhone: string;
+    simulated?: boolean;
+    previewCode?: string;
+  }> => {
+    const res = await fetch('/api/beneficiary/auth/otp/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return parseJsonOrThrow(res, 'خطا در ارسال کد تایید');
+  },
+  verifyBeneficiaryOtp: async (data: {
+    firstName: string;
+    lastName: string;
+    phone: string;
+    code: string;
+  }): Promise<{ beneficiary: BeneficiaryAccount; token: string }> => {
+    const res = await fetch('/api/beneficiary/auth/otp/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return parseJsonOrThrow(res, 'کد تایید نادرست است');
+  },
+  getBeneficiaryMe: async (token?: string): Promise<{ beneficiary: BeneficiaryAccount }> => {
+    const res = await beneficiaryAuthFetch('/api/beneficiary/auth/me', {}, token);
+    return parseJsonOrThrow(res, 'نشست کاربری مددجو منقضی شده است');
+  },
+  getBeneficiaryPortal: async (): Promise<{
+    beneficiary: BeneficiaryAccount;
+    items: BeneficiaryPortalFormItem[];
+  }> => {
+    const res = await beneficiaryAuthFetch('/api/beneficiary/portal');
+    return parseJsonOrThrow(res, 'خطا در دریافت اطلاعات پروفایل مددجو');
+  },
+  submitBeneficiaryForm: async (
+    formId: string,
+    data: SubmittedCustomFieldValue[],
+    isEdit = false
+  ): Promise<CustomFormSubmission> => {
+    const res = await beneficiaryAuthFetch(
+      `/api/beneficiary/forms/${encodeURIComponent(formId)}/submit`,
+      {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data }),
+      }
+    );
+    return parseJsonOrThrow(res, 'خطا در ثبت اطلاعات فرم مددجو');
   },
 };
 

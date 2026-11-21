@@ -1,18 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Header } from './components/Header';
+import { Header, AppView } from './components/Header';
 import { PublicView } from './components/PublicView';
 import { CustomFormPublicView } from './components/CustomFormPublicView';
 import { LoginView } from './components/LoginView';
+import { BeneficiaryLoginView } from './components/BeneficiaryLoginView';
+import { BeneficiaryPortalView } from './components/BeneficiaryPortalView';
 import { AdminLayout } from './components/admin/AdminLayout';
 import {
   AppConfig,
+  BeneficiaryAccount,
   BeneficiaryRequest,
   Category,
   Program,
   StaffUser,
 } from './types';
 import { EntityDefinition } from './utils/publicFormConfig';
-import { api } from './services/api';
+import { api, BENEFICIARY_TOKEN_KEY } from './services/api';
 import { HeartHandshake } from 'lucide-react';
 
 const ACTIVE_VIEW_STORAGE_KEY = 'OM_CHARITY_ACTIVE_VIEW';
@@ -38,6 +41,12 @@ export default function App() {
       window.location.pathname === '/public-form' ||
       new URLSearchParams(window.location.search).get('mode') === 'form');
 
+  const isBeneficiaryRoute =
+    typeof window !== 'undefined' &&
+    (window.location.pathname === '/beneficiary' ||
+      window.location.pathname === '/beneficiary/' ||
+      new URLSearchParams(window.location.search).get('portal') === 'beneficiary');
+
   const isStandalonePage = isStandaloneRequestForm || Boolean(customFormSlug);
 
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -47,8 +56,11 @@ export default function App() {
   const [requests, setRequests] = useState<BeneficiaryRequest[]>([]);
   const [programs, setPrograms] = useState<Program[]>([]);
 
-  const [activeView, setActiveView] = useState<'public' | 'login' | 'admin'>('public');
+  const [activeView, setActiveView] = useState<AppView>(
+    isBeneficiaryRoute ? 'beneficiary-login' : 'public'
+  );
   const [currentUser, setCurrentUser] = useState<StaffUser | null>(null);
+  const [currentBeneficiary, setCurrentBeneficiary] = useState<BeneficiaryAccount | null>(null);
   const [loading, setLoading] = useState(true);
 
   const canReadRequests = (user: StaffUser | null) => {
@@ -101,14 +113,24 @@ export default function App() {
     setActiveView(nextView);
   }, []);
 
+  const clearBeneficiarySession = useCallback((nextView?: AppView) => {
+    setCurrentBeneficiary(null);
+    localStorage.removeItem(BENEFICIARY_TOKEN_KEY);
+    if (nextView) setActiveView(nextView);
+  }, []);
+
   useEffect(() => {
     api.setUnauthorizedHandler(() => {
       clearAuthSession('login');
     });
+    api.setBeneficiaryUnauthorizedHandler(() => {
+      clearBeneficiarySession('beneficiary-login');
+    });
     return () => {
       api.setUnauthorizedHandler(null);
+      api.setBeneficiaryUnauthorizedHandler(null);
     };
-  }, [clearAuthSession]);
+  }, [clearAuthSession, clearBeneficiarySession]);
 
   useEffect(() => {
     const initApp = async () => {
@@ -126,22 +148,41 @@ export default function App() {
 
         if (!isStandalonePage) {
           const token = localStorage.getItem('OM_CHARITY_AUTH_TOKEN');
+          let savedView = sessionStorage.getItem(ACTIVE_VIEW_STORAGE_KEY);
           if (token) {
             try {
               const { user } = await api.getMe(token);
               setCurrentUser(user);
               localStorage.setItem('OM_CHARITY_CURRENT_USER', JSON.stringify(user));
               await loadProtectedData(user);
-              const savedView = sessionStorage.getItem(ACTIVE_VIEW_STORAGE_KEY);
-              if (savedView === 'admin') {
+              if (!isBeneficiaryRoute && savedView === 'admin') {
                 setActiveView('admin');
               }
             } catch {
               clearAuthSession('public');
+              savedView = null;
             }
           } else {
             localStorage.removeItem('OM_CHARITY_CURRENT_USER');
-            sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
+            if (savedView === 'admin') {
+              sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
+              savedView = null;
+            }
+          }
+
+          const bToken = localStorage.getItem(BENEFICIARY_TOKEN_KEY);
+          if (bToken) {
+            try {
+              const { beneficiary } = await api.getBeneficiaryMe(bToken);
+              setCurrentBeneficiary(beneficiary);
+              if (isBeneficiaryRoute || savedView === 'beneficiary-portal') {
+                setActiveView('beneficiary-portal');
+              }
+            } catch {
+              clearBeneficiarySession(isBeneficiaryRoute ? 'beneficiary-login' : undefined);
+            }
+          } else if (isBeneficiaryRoute) {
+            setActiveView('beneficiary-login');
           }
         }
       } catch (err) {
@@ -152,18 +193,23 @@ export default function App() {
     };
 
     initApp();
-  }, [isStandalonePage, loadProtectedData, clearAuthSession]);
+  }, [isStandalonePage, isBeneficiaryRoute, loadProtectedData, clearAuthSession, clearBeneficiarySession]);
 
-  const navigateTo = (view: 'public' | 'login' | 'admin') => {
+  const navigateTo = (view: AppView) => {
     if (isStandalonePage) return;
     if (view === 'admin' && !currentUser) {
       setActiveView('login');
       sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
       return;
     }
+    if (view === 'beneficiary-portal' && !currentBeneficiary) {
+      setActiveView('beneficiary-login');
+      sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
+      return;
+    }
     setActiveView(view);
-    if (view === 'admin') {
-      sessionStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, 'admin');
+    if (view === 'admin' || view === 'beneficiary-portal') {
+      sessionStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, view);
     } else {
       sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
     }
@@ -181,6 +227,19 @@ export default function App() {
 
   const handleLogout = () => {
     clearAuthSession('public');
+  };
+
+  const handleBeneficiaryLoginSuccess = (beneficiary: BeneficiaryAccount, token: string) => {
+    if (!token) return;
+    localStorage.setItem(BENEFICIARY_TOKEN_KEY, token);
+    setCurrentBeneficiary(beneficiary);
+    setActiveView('beneficiary-portal');
+    sessionStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, 'beneficiary-portal');
+  };
+
+  const handleBeneficiaryLogout = () => {
+    clearBeneficiarySession('public');
+    sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
   };
 
   const refreshRequests = async () => {
@@ -228,10 +287,12 @@ export default function App() {
       <Header
         config={config}
         currentUser={isStandalonePage ? null : currentUser}
+        currentBeneficiary={isStandalonePage ? null : currentBeneficiary}
         activeView={isStandalonePage ? 'public' : activeView}
         standalone={isStandalonePage}
         onNavigate={navigateTo}
         onLogout={handleLogout}
+        onBeneficiaryLogout={handleBeneficiaryLogout}
       />
 
       {/* Main Content */}
@@ -259,6 +320,28 @@ export default function App() {
                 needCategories={needCategories}
                 entities={entities}
                 onRequestSubmitted={refreshRequests}
+                onOpenBeneficiaryPortal={() =>
+                  navigateTo(currentBeneficiary ? 'beneficiary-portal' : 'beneficiary-login')
+                }
+              />
+            )}
+
+            {(activeView === 'beneficiary-login' ||
+              (activeView === 'beneficiary-portal' && !currentBeneficiary)) && (
+              <BeneficiaryLoginView
+                config={config}
+                onLoginSuccess={handleBeneficiaryLoginSuccess}
+                onBackToPublic={() => navigateTo('public')}
+              />
+            )}
+
+            {activeView === 'beneficiary-portal' && currentBeneficiary && (
+              <BeneficiaryPortalView
+                beneficiary={currentBeneficiary}
+                config={config}
+                entities={entities}
+                onLogout={handleBeneficiaryLogout}
+                onBackToPublic={() => navigateTo('public')}
               />
             )}
 

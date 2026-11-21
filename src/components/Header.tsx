@@ -11,31 +11,43 @@ import {
   Menu,
   X,
   ChevronDown,
+  UserCheck,
 } from 'lucide-react';
-import { AppConfig, StaffUser } from '../types';
+import { AppConfig, BeneficiaryAccount, StaffUser } from '../types';
+
+export type AppView =
+  | 'public'
+  | 'login'
+  | 'admin'
+  | 'beneficiary-login'
+  | 'beneficiary-portal';
 
 interface HeaderProps {
   config: AppConfig | null;
   currentUser: StaffUser | null;
-  activeView: 'public' | 'login' | 'admin';
-  onNavigate: (view: 'public' | 'login' | 'admin') => void;
+  currentBeneficiary?: BeneficiaryAccount | null;
+  activeView: AppView;
+  onNavigate: (view: AppView) => void;
   onLogout: () => void;
+  onBeneficiaryLogout?: () => void;
   standalone?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   config,
   currentUser,
+  currentBeneficiary,
   activeView,
   onNavigate,
   onLogout,
+  onBeneficiaryLogout,
   standalone = false,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const instName = config?.instName || 'مؤسسه خیریه حضرت ام‌البنین (س)';
 
-  const handleNav = (view: 'public' | 'login' | 'admin') => {
+  const handleNav = (view: AppView) => {
     if (standalone) return;
     onNavigate(view);
     setMobileMenuOpen(false);
@@ -88,7 +100,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Public Form link */}
             <button
               onClick={() => handleNav('public')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                 activeView === 'public'
                   ? 'bg-emerald-800/90 text-white shadow-inner border border-emerald-600/70'
                   : 'text-emerald-100 hover:bg-emerald-900/60 hover:text-white'
@@ -97,6 +109,44 @@ export const Header: React.FC<HeaderProps> = ({
               <FileText className="w-4 h-4 text-emerald-300" />
               <span>فرم عمومی و پیگیری</span>
             </button>
+
+            {/* Beneficiary Portal / Login button */}
+            {currentBeneficiary ? (
+              <div className="flex items-center gap-1.5 bg-teal-950/80 py-1.5 px-2.5 rounded-xl border border-teal-600/50">
+                <button
+                  onClick={() => handleNav('beneficiary-portal')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    activeView === 'beneficiary-portal'
+                      ? 'bg-teal-600 text-white shadow'
+                      : 'text-teal-200 hover:text-white'
+                  }`}
+                >
+                  <UserCheck className="w-4 h-4 text-amber-300" />
+                  <span>پروفایل {currentBeneficiary.firstName}</span>
+                </button>
+                {onBeneficiaryLogout && (
+                  <button
+                    onClick={onBeneficiaryLogout}
+                    title="خروج مددجو"
+                    className="p-1 text-teal-300 hover:text-rose-300 rounded-lg transition cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={() => handleNav('beneficiary-login')}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  activeView === 'beneficiary-login'
+                    ? 'bg-teal-600 text-white shadow'
+                    : 'bg-teal-800/70 hover:bg-teal-700 text-teal-100 border border-teal-600/50'
+                }`}
+              >
+                <UserCheck className="w-4 h-4 text-amber-300" />
+                <span>ورود مددجو</span>
+              </button>
+            )}
 
             {currentUser ? (
               // Logged in Staff Menu
@@ -243,6 +293,29 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <span className="text-[10px] bg-emerald-950/60 px-2 py-0.5 rounded text-emerald-300">
                 مراجعین
+              </span>
+            </button>
+
+            <button
+              onClick={() =>
+                handleNav(currentBeneficiary ? 'beneficiary-portal' : 'beneficiary-login')
+              }
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+                activeView === 'beneficiary-login' || activeView === 'beneficiary-portal'
+                  ? 'bg-teal-600 text-white'
+                  : 'text-teal-100 hover:bg-emerald-900/80'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-amber-300" />
+                <span>
+                  {currentBeneficiary
+                    ? `پروفایل مددجو (${currentBeneficiary.fullName})`
+                    : 'ورود / پروفایل مددجو'}
+                </span>
+              </div>
+              <span className="text-[10px] bg-teal-950/60 px-2 py-0.5 rounded text-amber-300">
+                مددجویان
               </span>
             </button>
 

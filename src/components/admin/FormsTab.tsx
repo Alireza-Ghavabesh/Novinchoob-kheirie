@@ -17,17 +17,26 @@ import {
   Eye,
   Clock,
   Archive,
+  UserCheck,
+  MessageSquare,
+  HardDrive,
+  FileText,
 } from 'lucide-react';
-import { CustomForm, CustomFormSubmission } from '../../types';
+import { CustomForm, CustomFormSubmission, CustomFormSubmissionStatus } from '../../types';
 import {
+  CUSTOM_FORM_STATUS_LABELS,
   CustomFormField,
+  CustomFormSmsRule,
   EntityDefinition,
+  formatBytesCompact,
   formatEntityRowSummary,
+  parseCustomFormSmsRules,
 } from '../../utils/publicFormConfig';
 import { api } from '../../services/api';
 import { toPersianDigits } from '../../utils/persian';
 import { EntitiesManagerSection } from './EntitiesManagerSection';
 import { FormFieldsEditor } from './FormFieldsEditor';
+import { FormSmsRulesSection } from './FormSmsRulesSection';
 
 interface FormsTabProps {
   entities: EntityDefinition[];
@@ -62,6 +71,9 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
   const [successMessage, setSuccessMessage] = useState('اطلاعات شما با موفقیت در سیستم ثبت گردید.');
   const [isActive, setIsActive] = useState(true);
   const [showTracking, setShowTracking] = useState(true);
+  const [showInBeneficiaryPortal, setShowInBeneficiaryPortal] = useState(false);
+  const [maxFileSizeMB, setMaxFileSizeMB] = useState<number>(5);
+  const [smsRules, setSmsRules] = useState<CustomFormSmsRule[]>([]);
   const [fields, setFields] = useState<CustomFormField[]>([]);
   const [savingForm, setSavingForm] = useState(false);
 
@@ -71,8 +83,11 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
   const [subsLoading, setSubsLoading] = useState(false);
   const [selectedSub, setSelectedSub] = useState<CustomFormSubmission | null>(null);
   const [subNoteInput, setSubNoteInput] = useState('');
-  const [subStatusInput, setSubStatusInput] = useState<'NEW' | 'REVIEWED' | 'ARCHIVED'>('NEW');
+  const [subExpertMsgInput, setSubExpertMsgInput] = useState('');
+  const [subSendSms, setSubSendSms] = useState(true);
+  const [subStatusInput, setSubStatusInput] = useState<CustomFormSubmissionStatus>('NEW');
   const [savingSub, setSavingSub] = useState(false);
+  const [subFeedback, setSubFeedback] = useState('');
 
   const loadForms = useCallback(async () => {
     setLoading(true);
@@ -101,6 +116,9 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
     setSuccessMessage('اطلاعات شما با موفقیت در سیستم ثبت گردید.');
     setIsActive(true);
     setShowTracking(true);
+    setShowInBeneficiaryPortal(false);
+    setMaxFileSizeMB(5);
+    setSmsRules([]);
     setFields([]);
     setErrorMsg('');
   };
@@ -121,6 +139,9 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
     setSuccessMessage(f.successMessage || 'اطلاعات شما با موفقیت ثبت شد.');
     setIsActive(f.isActive !== false);
     setShowTracking(f.showTracking !== false);
+    setShowInBeneficiaryPortal(Boolean(f.showInBeneficiaryPortal));
+    setMaxFileSizeMB(typeof f.maxFileSizeMB === 'number' && f.maxFileSizeMB > 0 ? f.maxFileSizeMB : 5);
+    setSmsRules(parseCustomFormSmsRules(f.smsRules));
     setFields(Array.isArray(f.fields) ? JSON.parse(JSON.stringify(f.fields)) : []);
     setErrorMsg('');
     setShowEditor(true);
@@ -145,6 +166,9 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
         successMessage: successMessage.trim() || 'اطلاعات شما با موفقیت ثبت شد.',
         isActive,
         showTracking,
+        showInBeneficiaryPortal,
+        maxFileSizeMB: Math.min(25, Math.max(1, Math.round(Number(maxFileSizeMB) || 5))),
+        smsRules,
         fields,
       };
       if (editingFormId) {
@@ -202,18 +226,29 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
     setSelectedSub(sub);
     setSubStatusInput(sub.status || 'NEW');
     setSubNoteInput(sub.note || '');
+    setSubExpertMsgInput(sub.expertMessage || '');
+    setSubSendSms(true);
+    setSubFeedback('');
   };
 
   const handleUpdateSubmission = async () => {
     if (!selectedSub || !viewingForm) return;
     setSavingSub(true);
+    setSubFeedback('');
     try {
       const updated = await api.updateFormSubmission(selectedSub.id, {
         status: subStatusInput,
         note: subNoteInput,
+        expertMessage: subExpertMsgInput,
+        sendSms: subSendSms,
       });
       setSubmissions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
       setSelectedSub(updated);
+      const smsNote =
+        updated.dispatchedSmsCount && updated.dispatchedSmsCount > 0
+          ? ` (به ${toPersianDigits(updated.dispatchedSmsCount)} شماره پیامک ارسال شد)`
+          : '';
+      setSubFeedback(`وضعیت و پیغام کارشناس با موفقیت ذخیره شد${smsNote}.`);
     } catch (err: any) {
       setErrorMsg(err.message || 'خطا در ثبت وضعیت');
     } finally {
@@ -242,7 +277,7 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
       }
       return str;
     };
-    const headers = ['کد پیگیری', 'وضعیت', 'تاریخ ثبت', 'پاسخ‌ها', 'یادداشت'];
+    const headers = ['کد پیگیری', 'مددجو', 'موبایل حساب', 'وضعیت', 'تاریخ ثبت', 'پاسخ‌ها', 'پیغام کارشناس', 'یادداشت'];
     const rows = submissions.map((s) => {
       const joinedData = (s.data || [])
         .map((item) => {
@@ -252,14 +287,20 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
               .join(' // ');
             return `${item.label}: [${subRows}]`;
           }
+          if (item.type === 'file' && item.fileUrl) {
+            return `${item.label}: ${item.fileName || item.value} (${item.fileUrl})`;
+          }
           return `${item.label}: ${item.value}`;
         })
         .join(' | ');
       return [
         s.trackingCode,
-        s.status,
+        s.beneficiary?.fullName || '-',
+        s.beneficiary?.phone || '-',
+        CUSTOM_FORM_STATUS_LABELS[s.status] || s.status,
         new Date(s.createdAt).toLocaleDateString('fa-IR'),
         joinedData,
+        s.expertMessage || '',
         s.note || '',
       ].map(escapeCsv);
     });
@@ -448,12 +489,29 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 text-[11px] text-slate-500">
-                    <span>تعداد فیلدها: {toPersianDigits(f.fields?.length || 0)}</span>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                    <span>فیلدها: {toPersianDigits(f.fields?.length || 0)}</span>
                     <span>•</span>
                     <span>
-                      پاسخ‌های دریافت‌شده: {toPersianDigits(f.submissionsCount || 0)}
+                      پاسخ‌ها: {toPersianDigits(f.submissionsCount || 0)}
                     </span>
+                    <span>•</span>
+                    <span className="inline-flex items-center gap-1 text-slate-600">
+                      <HardDrive className="w-3 h-3 text-slate-400" />
+                      سقف فایل: {toPersianDigits(f.maxFileSizeMB || 5)} مگابایت
+                    </span>
+                    {f.showInBeneficiaryPortal && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200 text-[10px] font-bold">
+                        <UserCheck className="w-3 h-3" />
+                        پروفایل مددجو
+                      </span>
+                    )}
+                    {Array.isArray(f.smsRules) && f.smsRules.length > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] font-bold">
+                        <MessageSquare className="w-3 h-3" />
+                        {toPersianDigits(f.smsRules.length)} قانون پیامک
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -607,33 +665,64 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                   />
                 </div>
 
-                <div className="flex flex-wrap gap-4 pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
-                    <input
-                      type="checkbox"
-                      checked={isActive}
-                      onChange={(e) => setIsActive(e.target.checked)}
-                      className="rounded text-emerald-600"
-                    />
-                    <span>فرم فعال و قابل دسترس از طریق لینک باشد</span>
-                  </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
+                      <input
+                        type="checkbox"
+                        checked={isActive}
+                        onChange={(e) => setIsActive(e.target.checked)}
+                        className="rounded text-emerald-600"
+                      />
+                      <span>فرم فعال و قابل دسترس از طریق لینک باشد</span>
+                    </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
-                    <input
-                      type="checkbox"
-                      checked={showTracking}
-                      onChange={(e) => setShowTracking(e.target.checked)}
-                      className="rounded text-emerald-600"
-                    />
-                    <span>نمایش بخش استعلام با کد پیگیری در صفحه فرم</span>
-                  </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
+                      <input
+                        type="checkbox"
+                        checked={showTracking}
+                        onChange={(e) => setShowTracking(e.target.checked)}
+                        className="rounded text-emerald-600"
+                      />
+                      <span>نمایش بخش استعلام با کد پیگیری در صفحه فرم</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer text-teal-900 font-bold bg-teal-50 border border-teal-200 px-3 py-2 rounded-xl">
+                      <input
+                        type="checkbox"
+                        checked={showInBeneficiaryPortal}
+                        onChange={(e) => setShowInBeneficiaryPortal(e.target.checked)}
+                        className="rounded text-teal-600"
+                      />
+                      <span>نمایش و تکمیل/ویرایش در پروفایل مددجو</span>
+                    </label>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-white border border-slate-200 flex flex-col justify-center space-y-1.5">
+                    <label className="font-bold text-slate-800 block">
+                      حداکثر حجم مجاز فایل آپلودی برای این فرم (مگابایت):
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={25}
+                        value={maxFileSizeMB}
+                        onChange={(e) =>
+                          setMaxFileSizeMB(Math.min(25, Math.max(1, Number(e.target.value) || 5)))
+                        }
+                        className="w-24 px-3 py-1.5 rounded-xl border border-slate-300 text-center font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                      <span className="text-slate-600 font-semibold">مگابایت (مستقل برای این فرم)</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
               {/* Fields Designer */}
               <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50/40 space-y-3">
                 <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
-                  ۲. طراحی فیلدهای فرم (متنی، عددی، سلکت‌باکس، موجودیتی و سلکت‌باکس از موجودیت)
+                  ۲. طراحی فیلدهای فرم (متنی، عددی، موبایل، فایل مدارک، سلکت‌باکس و موجودیتی)
                 </h4>
                 <FormFieldsEditor
                   fields={fields}
@@ -646,6 +735,13 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                   emptyText="هنوز فیلدی برای این فرم اضافه نشده است. از فرم بالا فیلدهای مورد نظر خود را اضافه کنید."
                 />
               </div>
+
+              {/* Dynamic Per-Form SMS Rules */}
+              <FormSmsRulesSection
+                fields={fields}
+                rules={smsRules}
+                onChange={setSmsRules}
+              />
 
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
@@ -730,24 +826,36 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                             : 'border-slate-200 hover:bg-slate-50'
                         }`}
                       >
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <span className="font-mono font-bold text-slate-800">
                             {sub.trackingCode}
                           </span>
-                          {sub.status === 'REVIEWED' ? (
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                              بررسی شده
-                            </span>
-                          ) : sub.status === 'ARCHIVED' ? (
-                            <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-bold">
-                              بایگانی
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
-                              جدید
-                            </span>
-                          )}
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              sub.status === 'APPROVED' || sub.status === 'REVIEWED'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : sub.status === 'NEEDS_INFO'
+                                ? 'bg-blue-100 text-blue-800'
+                                : sub.status === 'REJECTED'
+                                ? 'bg-rose-100 text-rose-800'
+                                : sub.status === 'IN_REVIEW'
+                                ? 'bg-indigo-100 text-indigo-800'
+                                : sub.status === 'ARCHIVED'
+                                ? 'bg-slate-200 text-slate-700'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {CUSTOM_FORM_STATUS_LABELS[sub.status] || sub.status}
+                          </span>
                         </div>
+                        {sub.beneficiary && (
+                          <div className="text-[11px] text-teal-800 font-semibold flex items-center gap-1">
+                            <UserCheck className="w-3 h-3 shrink-0" />
+                            <span>
+                              {sub.beneficiary.fullName} ({toPersianDigits(sub.beneficiary.phone)})
+                            </span>
+                          </div>
+                        )}
                         {previewItem && (
                           <p className="text-[11px] text-slate-600 truncate">
                             {previewItem.label}: {previewItem.value}
@@ -763,18 +871,25 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                   {!selectedSub ? (
                     <div className="h-full min-h-[220px] flex flex-col items-center justify-center border border-dashed border-slate-300 rounded-2xl text-xs text-slate-400 p-6 text-center">
                       <Eye className="w-7 h-7 mb-2 text-slate-300" />
-                      <span>برای مشاهده جزئیات کامل و مدیریت وضعیت، یکی از پاسخ‌ها را از لیست انتخاب کنید.</span>
+                      <span>برای مشاهده جزئیات کامل، فایل‌های پیوست و ارسال پیغام به مددجو، یکی از پاسخ‌ها را انتخاب کنید.</span>
                     </div>
                   ) : (
                     <div className="border border-slate-200 rounded-2xl p-4 space-y-4 text-xs bg-slate-50/50">
-                      <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
-                        <div>
+                      <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 gap-2">
+                        <div className="space-y-0.5">
                           <span className="font-mono font-black text-sm text-slate-900">
                             {selectedSub.trackingCode}
                           </span>
                           <span className="text-[11px] text-slate-500 block">
                             تاریخ ثبت: {new Date(selectedSub.createdAt).toLocaleString('fa-IR')}
                           </span>
+                          {selectedSub.beneficiary && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-900 border border-teal-200 text-[11px] font-bold">
+                              <UserCheck className="w-3 h-3" />
+                              پروفایل مددجو: {selectedSub.beneficiary.fullName} —{' '}
+                              <span className="font-mono dir-ltr">{selectedSub.beneficiary.phone}</span>
+                            </span>
+                          )}
                         </div>
                         <button
                           type="button"
@@ -786,66 +901,118 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                         </button>
                       </div>
 
-                      <div className="space-y-2.5 max-h-[40vh] overflow-y-auto pr-1">
-                        {(selectedSub.data || []).map((item, idx) => (
-                          <div
-                            key={`${item.id}-${idx}`}
-                            className="bg-white p-3 rounded-xl border border-slate-200"
-                          >
-                            <span className="text-[11px] text-slate-500 block mb-1">
-                              {item.label}:
-                            </span>
-                            {item.type === 'entity_list' && Array.isArray(item.items) ? (
-                              item.items.length === 0 ? (
-                                <span className="text-slate-400">موردی ثبت نشده</span>
-                              ) : (
-                                <div className="space-y-2 mt-1.5">
-                                  {item.items.map((row, rIdx) => (
-                                    <div
-                                      key={rIdx}
-                                      className="p-2.5 rounded-lg bg-emerald-50/50 border border-emerald-200 grid grid-cols-1 sm:grid-cols-3 gap-2"
-                                    >
-                                      {Object.entries(row).map(([k, v]) => (
-                                        <div key={k}>
-                                          <span className="text-[10px] text-slate-500 block">
-                                            {k}:
-                                          </span>
-                                          <span className="font-bold text-slate-900">{v || '-'}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ))}
-                                </div>
-                              )
-                            ) : (
-                              <span className="font-bold text-slate-900 whitespace-pre-wrap">
-                                {item.value || '-'}
+                      <div className="space-y-2.5 max-h-[38vh] overflow-y-auto pr-1">
+                        {(selectedSub.data || []).map((item, idx) => {
+                          const isImgFile =
+                            item.type === 'file' &&
+                            Boolean(
+                              item.mimeType?.startsWith('image/') ||
+                                /\.(jpg|jpeg|png|gif|webp)$/i.test(item.fileName || item.value || '')
+                            );
+                          return (
+                            <div
+                              key={`${item.id}-${idx}`}
+                              className="bg-white p-3 rounded-xl border border-slate-200"
+                            >
+                              <span className="text-[11px] text-slate-500 block mb-1">
+                                {item.label}:
                               </span>
-                            )}
-                          </div>
-                        ))}
+                              {item.type === 'entity_list' && Array.isArray(item.items) ? (
+                                item.items.length === 0 ? (
+                                  <span className="text-slate-400">موردی ثبت نشده</span>
+                                ) : (
+                                  <div className="space-y-2 mt-1.5">
+                                    {item.items.map((row, rIdx) => (
+                                      <div
+                                        key={rIdx}
+                                        className="p-2.5 rounded-lg bg-emerald-50/50 border border-emerald-200 grid grid-cols-1 sm:grid-cols-3 gap-2"
+                                      >
+                                        {Object.entries(row).map(([k, v]) => (
+                                          <div key={k}>
+                                            <span className="text-[10px] text-slate-500 block">
+                                              {k}:
+                                            </span>
+                                            <span className="font-bold text-slate-900">{v || '-'}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )
+                              ) : item.type === 'file' && item.fileUrl ? (
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-2 rounded-lg bg-indigo-50/60 border border-indigo-200">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    {isImgFile ? (
+                                      <img
+                                        src={item.fileUrl}
+                                        alt={item.fileName || item.label}
+                                        className="w-12 h-12 rounded-lg object-cover border border-indigo-200 bg-white shrink-0"
+                                      />
+                                    ) : (
+                                      <div className="w-10 h-10 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                                        <FileText className="w-5 h-5" />
+                                      </div>
+                                    )}
+                                    <div className="min-w-0">
+                                      <span className="font-bold text-slate-900 block truncate">
+                                        {item.fileName || item.value || 'فایل پیوست'}
+                                      </span>
+                                      {item.fileSize && (
+                                        <span className="text-[10px] text-slate-500">
+                                          {formatBytesCompact(item.fileSize)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <a
+                                    href={item.fileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold shrink-0"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                    <span>مشاهده / دانلود</span>
+                                  </a>
+                                </div>
+                              ) : (
+                                <span className="font-bold text-slate-900 whitespace-pre-wrap">
+                                  {item.value || '-'}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
 
-                      {/* Review Status Controls */}
-                      <div className="pt-3 border-t border-slate-200 space-y-2.5">
+                      {subFeedback && (
+                        <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] flex items-center gap-1.5 font-semibold">
+                          <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>{subFeedback}</span>
+                        </div>
+                      )}
+
+                      {/* Review Status & Expert Message Controls */}
+                      <div className="pt-3 border-t border-slate-200 space-y-3">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                           <div>
                             <label className="block font-semibold text-slate-700 mb-1">وضعیت بررسی</label>
                             <select
                               value={subStatusInput}
                               onChange={(e) =>
-                                setSubStatusInput(e.target.value as 'NEW' | 'REVIEWED' | 'ARCHIVED')
+                                setSubStatusInput(e.target.value as CustomFormSubmissionStatus)
                               }
                               className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white outline-none"
                             >
-                              <option value="NEW">جدید (در صف بررسی)</option>
-                              <option value="REVIEWED">بررسی و تایید شده</option>
-                              <option value="ARCHIVED">بایگانی شده</option>
+                              {Object.entries(CUSTOM_FORM_STATUS_LABELS).map(([k, lbl]) => (
+                                <option key={k} value={k}>
+                                  {lbl}
+                                </option>
+                              ))}
                             </select>
                           </div>
                           <div>
                             <label className="block font-semibold text-slate-700 mb-1">
-                              یادداشت کارشناس (نمایش در پیگیری)
+                              یادداشت کوتاه وضعیت (نمایش در استعلام)
                             </label>
                             <input
                               type="text"
@@ -856,21 +1023,52 @@ export const FormsTab: React.FC<FormsTabProps> = ({ entities, onRefreshEntities 
                             />
                           </div>
                         </div>
-                        <div className="flex justify-end">
+
+                        <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="font-bold text-amber-950">
+                              پیغام کارشناس برای نمایش در پروفایل مددجو:
+                            </label>
+                            {selectedSub.expertMessageAt && (
+                              <span className="text-[10px] text-amber-800">
+                                آخرین ثبت توسط {selectedSub.expertMessageBy || 'کارشناس'}
+                              </span>
+                            )}
+                          </div>
+                          <textarea
+                            rows={2}
+                            value={subExpertMsgInput}
+                            onChange={(e) => setSubExpertMsgInput(e.target.value)}
+                            placeholder="مثال: مدارک شما ناقص است و نیاز به بارگذاری تصویر شناسنامه دارید..."
+                            className="w-full px-3 py-2 rounded-xl border border-amber-300 bg-white outline-none focus:ring-2 focus:ring-amber-500"
+                          />
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <label className="flex items-center gap-2 cursor-pointer text-slate-700 text-[11px]">
+                            <input
+                              type="checkbox"
+                              checked={subSendSms}
+                              onChange={(e) => setSubSendSms(e.target.checked)}
+                              className="rounded text-emerald-600"
+                            />
+                            <span>اجرای قوانین پیامک متصل به رویداد (پیغام کارشناس / تغییر وضعیت)</span>
+                          </label>
+
                           <button
                             type="button"
                             disabled={savingSub}
                             onClick={handleUpdateSubmission}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl cursor-pointer disabled:opacity-50"
+                            className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl cursor-pointer disabled:opacity-50"
                           >
-                            {subStatusInput === 'REVIEWED' ? (
+                            {subStatusInput === 'APPROVED' || subStatusInput === 'REVIEWED' ? (
                               <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
                             ) : subStatusInput === 'ARCHIVED' ? (
                               <Archive className="w-3.5 h-3.5 text-slate-300" />
                             ) : (
                               <Clock className="w-3.5 h-3.5 text-amber-400" />
                             )}
-                            <span>{savingSub ? 'در حال ثبت...' : 'به‌روزرسانی وضعیت'}</span>
+                            <span>{savingSub ? 'در حال ثبت...' : 'ذخیره وضعیت و پیغام کارشناس'}</span>
                           </button>
                         </div>
                       </div>

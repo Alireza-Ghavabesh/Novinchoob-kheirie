@@ -46,6 +46,7 @@ export const EntitiesManagerSection: React.FC<EntitiesManagerSectionProps> = ({
   const [subRequired, setSubRequired] = useState(true);
   const [subOptions, setSubOptions] = useState<string[]>([]);
   const [subOptInput, setSubOptInput] = useState('');
+  const [subMultiple, setSubMultiple] = useState(false);
   const [inlineSubOptInputs, setInlineSubOptInputs] = useState<Record<string, string>>({});
 
   // Catalog item input (for entity_select)
@@ -68,6 +69,7 @@ export const EntitiesManagerSection: React.FC<EntitiesManagerSectionProps> = ({
     setSubRequired(true);
     setSubOptions([]);
     setSubOptInput('');
+    setSubMultiple(false);
     setNewCatalogItem('');
     setErrorMsg('');
   };
@@ -113,6 +115,7 @@ export const EntitiesManagerSection: React.FC<EntitiesManagerSectionProps> = ({
       placeholder: subPlaceholder.trim(),
       required: subRequired,
       options: subType === 'select' ? [...subOptions] : [],
+      multiple: subType === 'select' ? subMultiple : undefined,
     };
     setFields((prev) => [...prev, sub]);
     setSubLabel('');
@@ -121,6 +124,7 @@ export const EntitiesManagerSection: React.FC<EntitiesManagerSectionProps> = ({
     setSubRequired(true);
     setSubOptions([]);
     setSubOptInput('');
+    setSubMultiple(false);
   };
 
   const moveSubField = (idx: number, dir: -1 | 1) => {
@@ -450,9 +454,20 @@ export const EntitiesManagerSection: React.FC<EntitiesManagerSectionProps> = ({
 
                   {subType === 'select' && (
                     <div className="p-2.5 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2">
-                      <span className="block font-bold text-emerald-900 text-[11px]">
-                        گزینه‌های این سلکت‌باکس:
-                      </span>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <span className="block font-bold text-emerald-900 text-[11px]">
+                          گزینه‌های این سلکت‌باکس:
+                        </span>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-emerald-900 font-semibold text-[11px]">
+                          <input
+                            type="checkbox"
+                            checked={subMultiple}
+                            onChange={(e) => setSubMultiple(e.target.checked)}
+                            className="rounded text-emerald-600"
+                          />
+                          <span>چندانتخابی (Multi-Select)</span>
+                        </label>
+                      </div>
                       <div className="flex gap-2">
                         <input
                           type="text"
@@ -546,7 +561,25 @@ export const EntitiesManagerSection: React.FC<EntitiesManagerSectionProps> = ({
                           />
                         </div>
 
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {sf.type === 'select' && (
+                            <label className="inline-flex items-center gap-1 px-2 py-0.5 bg-teal-50 border border-teal-200 rounded text-[11px] text-teal-900 font-semibold cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(sf.multiple)}
+                                onChange={(e) =>
+                                  setFields((prev) =>
+                                    prev.map((item) =>
+                                      item.id === sf.id
+                                        ? { ...item, multiple: e.target.checked }
+                                        : item
+                                    )
+                                  )
+                                }
+                              />
+                              <span>چندانتخابی</span>
+                            </label>
+                          )}
                           <label className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-200 rounded text-[11px] cursor-pointer">
                             <input
                               type="checkbox"

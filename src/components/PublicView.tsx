@@ -13,6 +13,7 @@ import {
   MapPin,
   FileText,
   ShieldAlert,
+  UserCheck,
 } from 'lucide-react';
 import { AppConfig, Category, BeneficiaryRequest } from '../types';
 import {
@@ -39,6 +40,7 @@ interface PublicViewProps {
   needCategories: Category[];
   entities?: EntityDefinition[];
   onRequestSubmitted?: () => void;
+  onOpenBeneficiaryPortal?: () => void;
 }
 
 export const PublicView: React.FC<PublicViewProps> = ({
@@ -46,6 +48,7 @@ export const PublicView: React.FC<PublicViewProps> = ({
   needCategories,
   entities = [],
   onRequestSubmitted,
+  onOpenBeneficiaryPortal,
 }) => {
   const formSchema = useMemo(
     () => parsePublicFormSchema(config?.publicFormConfig),
@@ -202,26 +205,42 @@ export const PublicView: React.FC<PublicViewProps> = ({
         <div className="absolute -left-10 -bottom-10 w-48 h-48 bg-emerald-600/20 rounded-full blur-2xl pointer-events-none" />
         <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-right">
           <div className="space-y-3">
-            <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-amber-400/20 text-amber-300 border border-amber-400/30">
-              بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-            </span>
+            {formSchema.heroBadge && (
+              <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                {formSchema.heroBadge}
+              </span>
+            )}
             <h2 className="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight text-white leading-snug">
-              فرم عمومی پذیرش و نیازسنجی نیازمندان
+              {formSchema.title}
             </h2>
-            <p className="text-sm text-emerald-100/90 max-w-2xl leading-relaxed">
-              «وَمَا تُنفِقُوا مِنْ خَيْرٍ يُوَفَّ إِلَيْكُمْ وَأَنتُمْ لَا تُظْلَمُونَ»
-              <br />
-              مراجعین گرامی، این فرم با حفظ کامل کرامت انسانی و محرمانگی هویت شما جهت بررسی در کمیسیون مددکاری مؤسسه خیریه طراحی شده است.
-            </p>
+            {formSchema.description && (
+              <p className="text-sm text-emerald-100/90 max-w-2xl leading-relaxed whitespace-pre-line">
+                «وَمَا تُنفِقُوا مِنْ خَيْرٍ يُوَفَّ إِلَيْكُمْ وَأَنتُمْ لَا تُظْلَمُونَ»
+                <br />
+                {formSchema.description}
+              </p>
+            )}
           </div>
 
-          <div className="bg-emerald-950/60 p-4 rounded-xl border border-emerald-600/40 text-center shrink-0 w-full md:w-auto">
-            <p className="text-xs text-emerald-300 mb-1">تلفن مستقیم پاسخگویی و مددکاری:</p>
-            <div className="flex items-center justify-center gap-1.5 text-amber-300 font-bold text-base sm:text-lg dir-ltr">
-              <Phone className="w-4 h-4 text-emerald-400" />
-              <span>{config?.phone || '021-55667788'}</span>
+          <div className="bg-emerald-950/60 p-4 rounded-xl border border-emerald-600/40 text-center shrink-0 w-full md:w-auto space-y-2.5">
+            <div>
+              <p className="text-xs text-emerald-300 mb-1">تلفن مستقیم پاسخگویی و مددکاری:</p>
+              <div className="flex items-center justify-center gap-1.5 text-amber-300 font-bold text-base sm:text-lg dir-ltr">
+                <Phone className="w-4 h-4 text-emerald-400" />
+                <span>{config?.phone || '021-55667788'}</span>
+              </div>
+              <p className="text-[11px] text-emerald-400/80 mt-1">ساعت ۸ صبح الی ۱۶ عصر</p>
             </div>
-            <p className="text-[11px] text-emerald-400/80 mt-1">ساعت ۸ صبح الی ۱۶ عصر</p>
+            {onOpenBeneficiaryPortal && (
+              <button
+                type="button"
+                onClick={onOpenBeneficiaryPortal}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold shadow transition cursor-pointer"
+              >
+                <UserCheck className="w-4 h-4" />
+                <span>ورود به پروفایل مددجو</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -243,7 +262,7 @@ export const PublicView: React.FC<PublicViewProps> = ({
           <div className="flex items-center gap-3 mb-4 text-emerald-800">
             <CheckCircle2 className="w-8 h-8 text-emerald-600 shrink-0" />
             <div>
-              <h3 className="text-lg font-bold">درخواست شما با موفقیت در سیستم ثبت گردید</h3>
+              <h3 className="text-lg font-bold">{formSchema.successMessage}</h3>
               <p className="text-xs text-emerald-700">
                 پرونده مددکاری برای شما ایجاد شد و در نوبت رسیدگی کمیسیون قرار گرفت.
               </p>
@@ -512,6 +531,8 @@ export const PublicView: React.FC<PublicViewProps> = ({
               values={customValues}
               entities={entities}
               onChange={setCustomValues}
+              maxFileSizeMB={formSchema.maxFileSizeMB || 5}
+              uploadContext={{ source: 'public_form' }}
             />
 
             {/* Row 5: Detailed Description */}
@@ -560,7 +581,7 @@ export const PublicView: React.FC<PublicViewProps> = ({
                 ) : (
                   <>
                     <Send className="w-4 h-4" />
-                    <span>ثبت نهایی و دریافت کد رهگیری</span>
+                    <span>{formSchema.submitButtonText}</span>
                   </>
                 )}
               </button>
@@ -571,6 +592,7 @@ export const PublicView: React.FC<PublicViewProps> = ({
         {/* Right Column (1 Col): Online Tracking & Info */}
         <div className="space-y-6">
           {/* Tracking Box */}
+          {formSchema.showTracking && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
             <h4 className="text-base font-bold text-slate-900 flex items-center gap-2 mb-2">
               <Search className="w-5 h-5 text-emerald-600" />
@@ -671,6 +693,7 @@ export const PublicView: React.FC<PublicViewProps> = ({
               </div>
             )}
           </div>
+          )}
 
           {/* Charity Trust & Info Card */}
           <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-6 shadow-sm space-y-4">

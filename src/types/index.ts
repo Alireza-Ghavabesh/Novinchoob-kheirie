@@ -192,6 +192,25 @@ export interface FinanceSummary {
   progCategoryBreakdown: Record<string, { count: number; approvedCount: number; approvedBudget: number }>;
 }
 
+export type CustomFormSubmissionStatus =
+  | 'NEW'
+  | 'IN_REVIEW'
+  | 'NEEDS_INFO'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'REVIEWED'
+  | 'ARCHIVED';
+
+export interface BeneficiaryAccount {
+  id: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  phone: string;
+  isActive?: boolean;
+  createdAt?: string;
+}
+
 export interface CustomForm {
   id: string;
   slug: string;
@@ -203,6 +222,9 @@ export interface CustomForm {
   successMessage: string;
   isActive: boolean;
   showTracking: boolean;
+  showInBeneficiaryPortal: boolean;
+  maxFileSizeMB: number;
+  smsRules: import('../utils/publicFormConfig').CustomFormSmsRule[];
   fields: import('../utils/publicFormConfig').CustomFormField[];
   submissionsCount?: number;
   createdAt?: string;
@@ -213,10 +235,21 @@ export interface CustomFormSubmission {
   id: number;
   trackingCode: string;
   formId: string;
+  beneficiaryId?: string | null;
+  beneficiary?: BeneficiaryAccount | null;
   data: import('../utils/publicFormConfig').SubmittedCustomFieldValue[];
-  status: 'NEW' | 'REVIEWED' | 'ARCHIVED';
+  status: CustomFormSubmissionStatus;
   note?: string | null;
+  expertMessage?: string | null;
+  expertMessageAt?: string | null;
+  expertMessageBy?: string | null;
+  dispatchedSmsCount?: number;
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface BeneficiaryPortalFormItem {
+  form: CustomForm;
+  submission: CustomFormSubmission | null;
 }
 

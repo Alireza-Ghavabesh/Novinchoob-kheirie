@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { SmsConfig, SmsRule, SmsLog, SmsEventType, SmsTargetType, StaffUser } from '../../types';
 import { api } from '../../services/api';
+import { appendSmsCancellationFooter } from '../../utils/smsFormat';
 
 interface SmsTabProps {
   currentUser: StaffUser;
@@ -156,12 +157,20 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
       return;
     }
 
+    const payload = {
+      ...ruleFormData,
+      messageBody:
+        ruleFormData.templateType === 'OTP'
+          ? ruleFormData.messageBody
+          : appendSmsCancellationFooter(ruleFormData.messageBody),
+    };
+
     try {
       if (editingRuleId) {
-        await api.updateSmsRule(editingRuleId, ruleFormData);
+        await api.updateSmsRule(editingRuleId, payload);
         notify('شرط ارسال با موفقیت ویرایش شد.');
       } else {
-        await api.createSmsRule(ruleFormData);
+        await api.createSmsRule(payload);
         notify('شرط جدید ارسال پیامک با موفقیت افزوده شد.');
       }
       setIsEditingRule(false);
@@ -245,7 +254,9 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
     try {
       setTestSending(true);
       setTestResult(null);
-      const res = await api.testSms(testReceptor, testMessage);
+      const formattedMessage = appendSmsCancellationFooter(testMessage);
+      setTestMessage(formattedMessage);
+      const res = await api.testSms(testReceptor, formattedMessage);
       setTestResult(res);
       notify('درخواست ارسال تست با موفقیت پردازش شد.');
       const lgs = await api.getSmsLogs();
@@ -749,6 +760,11 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
                     className="w-full border border-slate-300 rounded-xl p-3 text-xs focus:ring-2 focus:ring-emerald-500 font-sans"
                     placeholder="سلام {name} عزیز، درخواست شما در {instName} با کد رهگیری {trackingCode} با موفقیت ثبت شد."
                   />
+                  {ruleFormData.templateType === 'SIMPLE' && (
+                    <p className="text-[11px] text-emerald-700 bg-emerald-50/70 border border-emerald-200 rounded-lg px-2.5 py-1.5">
+                      عبارت <span className="font-bold font-mono">لغو 11</span> به صورت خودکار در خط جدید انتهای پیامک درج می‌شود تا شماره مسدود نشود.
+                    </p>
+                  )}
 
                   {/* Detailed Variable Guide Box */}
                   <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-3 text-[11px] text-slate-700 space-y-2">
@@ -890,7 +906,7 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
                       )}
                     </div>
 
-                    <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-xs text-slate-700 font-sans leading-relaxed">
+                    <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-xs text-slate-700 font-sans leading-relaxed whitespace-pre-line">
                       {rule.messageBody}
                     </div>
                   </div>
@@ -1197,6 +1213,9 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
                 onChange={e => setTestMessage(e.target.value)}
                 className="w-full border border-slate-300 rounded-xl p-3 text-xs focus:ring-2 focus:ring-emerald-500"
               />
+              <p className="text-[11px] text-emerald-700 bg-emerald-50/70 border border-emerald-200 rounded-lg px-2.5 py-1.5 mt-1.5">
+                عبارت <span className="font-bold font-mono">لغو 11</span> به صورت خودکار در خط جدید انتهای پیامک اضافه می‌شود.
+              </p>
             </div>
 
             <button
@@ -1278,7 +1297,7 @@ export const SmsTab: React.FC<SmsTabProps> = ({ currentUser }) => {
                       <td className="p-3 font-mono text-xs whitespace-nowrap">
                         {log.receptor}
                       </td>
-                      <td className="p-3 max-w-xs md:max-w-md truncate" title={log.message}>
+                      <td className="p-3 max-w-xs md:max-w-md whitespace-pre-line leading-relaxed" title={log.message}>
                         {log.message}
                       </td>
                       <td className="p-3 whitespace-nowrap">
