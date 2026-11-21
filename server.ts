@@ -198,6 +198,82 @@ async function ensureDatabaseSchema(): Promise<void> {
   return schemaHealPromise;
 }
 
+/**
+ * Safely seeds minimum required records ONLY when tables are completely empty
+ * (e.g., first launch on a brand-new server). Never modifies or overwrites existing data.
+ */
+async function ensureInitialBootstrap(): Promise<void> {
+  try {
+    const userCount = await prisma.user.count();
+    if (userCount === 0) {
+      await prisma.user.create({
+        data: {
+          id: 'u-admin',
+          username: 'admin',
+          password: hashPassword('123'),
+          name: 'مدیر عامل مؤسسه',
+          role: 'مدیر ارشد عالی',
+          perms: JSON.stringify({
+            viewInbox: true,
+            decideInbox: true,
+            viewProg: true,
+            createProg: true,
+            decideProg: true,
+            viewFin: true,
+            manageSettings: true,
+          }),
+          isActive: true,
+        },
+      });
+      console.log('[DB Bootstrap] Created initial admin account (username: admin)');
+    }
+
+    const appCfgCount = await prisma.appConfig.count();
+    if (appCfgCount === 0) {
+      await prisma.appConfig.create({
+        data: {
+          id: 1,
+          instName: 'مؤسسه خیریه حضرت ام‌البنین (س)',
+          automationTitle: 'سامانه اتوماسیون کادر خیریه حضرت ام‌البنین (س)',
+          phone: '021-55667788',
+          address: 'تهران، منطقه ۱۷، خیابان ابوذر، نبش خیابان شهید فتحی، پلاک ۲۴',
+          notice: 'تمامی اطلاعات ثبت‌شده توسط مددکاران معتمد خیریه بازبینی و راستی‌آزمایی می‌گردد.',
+        },
+      });
+    }
+
+    const needCatCount = await prisma.needCategory.count();
+    if (needCatCount === 0) {
+      const defaults = [
+        'درمان و هزینه‌های پزشکی و جراحی',
+        'ودیعه و اجاره‌بهای مسکن',
+        'بسته‌های معیشتی و سبد غذایی',
+        'کمک‌هزینه تحصیلی و دانشگاهی',
+        'تأمین جهیزیه و ملزومات اساسی زندگی',
+        'اشتغال‌زایی و توانمندسازی خانوار',
+      ];
+      for (const name of defaults) {
+        await prisma.needCategory.upsert({ where: { name }, update: {}, create: { name } });
+      }
+    }
+
+    const progCatCount = await prisma.programCategory.count();
+    if (progCatCount === 0) {
+      const defaults = [
+        'عمرانی و مدرسه‌سازی',
+        'پویش‌های فصلی و اطعام',
+        'کاروان‌های سلامت و درمان رایگان',
+        'توانمندسازی و کارآفرینی',
+      ];
+      for (const name of defaults) {
+        await prisma.programCategory.upsert({ where: { name }, update: {}, create: { name } });
+      }
+    }
+  } catch (err) {
+    console.error('[DB Bootstrap] Non-fatal bootstrap error:', err);
+  }
+}
+
 // --- Auth & Phone Helpers ---
 function normalizeDigits(input: string): string {
   if (!input) return '';
@@ -3403,6 +3479,7 @@ app.put(
 // Vite Middleware or Static Production Serving
 async function startServer() {
   await ensureDatabaseSchema();
+  await ensureInitialBootstrap();
   await ensureDefaultEntities();
   const isProd = process.env.NODE_ENV === 'production';
 

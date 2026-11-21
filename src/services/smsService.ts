@@ -72,6 +72,65 @@ export class GhasedakSmsService {
     return msg;
   }
 
+  private parseGhasedakResponse(
+    response: Response,
+    resData: any,
+    modeLabel: 'OTP' | 'SIMPLE'
+  ): { success: boolean; messageId?: string; cost?: number; error?: string } {
+    const resultField = resData?.result;
+    const resultStr = typeof resultField === 'string' ? resultField.trim().toLowerCase() : '';
+    const resultObj = resultField && typeof resultField === 'object' ? resultField : null;
+
+    const rawMsgId = Array.isArray(resData?.messageids)
+      ? resData.messageids[0]
+      : resData?.messageids ??
+        (Array.isArray(resData?.items) ? resData.items[0] : resData?.items) ??
+        resData?.data?.messageId ??
+        resData?.messageid;
+
+    const hasValidMessageId =
+      rawMsgId !== undefined && rawMsgId !== null && String(rawMsgId).trim() !== '' && String(rawMsgId) !== '0';
+
+    const hasExplicitError =
+      resultStr === 'error' ||
+      resultStr === 'fail' ||
+      resultStr === 'failed' ||
+      resData?.isSuccess === false ||
+      (resultObj?.code !== undefined && Number(resultObj.code) !== 200);
+
+    const hasExplicitSuccess =
+      resultStr === 'success' ||
+      resultStr === 'ok' ||
+      resData?.isSuccess === true ||
+      Number(resultObj?.code) === 200 ||
+      String(resultObj?.status || '').toLowerCase() === 'success' ||
+      String(resultObj?.message || '').toLowerCase() === 'success';
+
+    if (response.ok && !hasExplicitError && (hasExplicitSuccess || hasValidMessageId)) {
+      return {
+        success: true,
+        messageId: hasValidMessageId
+          ? String(rawMsgId)
+          : String(resultObj?.message || (modeLabel === 'OTP' ? 'OTP_SENT' : 'SMS_SENT')),
+        cost: typeof resData?.cost === 'number' ? resData.cost : undefined,
+      };
+    }
+
+    const errCode = resultObj?.code || resData?.statusCode || response.status;
+    const errDetail =
+      resultObj?.message ||
+      resData?.message ||
+      resData?.error ||
+      (typeof resultField === 'string' && resultField ? resultField : '') ||
+      JSON.stringify(resData);
+
+    const prefix = modeLabel === 'OTP' ? 'خطای وب‌سرویس OTP قاصدک' : 'خطای پیامک قاصدک';
+    return {
+      success: false,
+      error: `${prefix} (${errCode}): ${errDetail}`,
+    };
+  }
+
   /**
    * Send single SMS via Ghasedak REST API
    * Supports Simple SMS API: https://api.ghasedaksms.com/v2/sms/send/simple
@@ -125,23 +184,7 @@ export class GhasedakSmsService {
         });
 
         const resData = await response.json().catch(() => ({}));
-        const hasErrorCode = resData?.result?.code !== undefined && Number(resData.result.code) !== 200;
-        const isSuccess =
-          response.ok &&
-          !hasErrorCode &&
-          (Number(resData?.result?.code) === 200 ||
-            resData?.result?.status === 'success' ||
-            (Array.isArray(resData?.items) && resData.items.length > 0));
-
-        if (isSuccess) {
-          return {
-            success: true,
-            messageId: String(resData?.items?.[0] || resData?.result?.message || 'OTP_SENT'),
-          };
-        } else {
-          const errDetail = resData?.result?.message || JSON.stringify(resData);
-          return { success: false, error: `خطای وب‌سرویس OTP قاصدک (${resData?.result?.code || response.status}): ${errDetail}` };
-        }
+        return this.parseGhasedakResponse(response, resData, 'OTP');
       } else {
         // Send via Simple SMS API
         const finalMessage = appendSmsCancellationFooter(message);
@@ -163,23 +206,7 @@ export class GhasedakSmsService {
         });
 
         const resData = await response.json().catch(() => ({}));
-        const hasErrorCode = resData?.result?.code !== undefined && Number(resData.result.code) !== 200;
-        const isSuccess =
-          response.ok &&
-          !hasErrorCode &&
-          (Number(resData?.result?.code) === 200 ||
-            (Array.isArray(resData?.items) && resData.items.length > 0));
-
-        if (isSuccess) {
-          return {
-            success: true,
-            messageId: String(resData?.items?.[0] || 'SMS_SENT'),
-            cost: resData?.cost,
-          };
-        } else {
-          const errDetail = resData?.result?.message || JSON.stringify(resData);
-          return { success: false, error: `خطای پیامک قاصدک (${resData?.result?.code || response.status}): ${errDetail}` };
-        }
+        return this.parseGhasedakResponse(response, resData, 'SIMPLE');
       }
     } catch (err: any) {
       return { success: false, error: err?.message || String(err) };

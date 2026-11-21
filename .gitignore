@@ -6,3 +6,15 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Persistent SQLite database, backups, sync cache & user uploads
+# Never commit or overwrite production data on git push / git pull
+prisma/*.db
+prisma/*.db-journal
+prisma/*.db-wal
+prisma/*.db-shm
+prisma/charity.db*
+prisma/.schema-sync.hash
+prisma/backups/
+prisma/uploads/*
+!prisma/uploads/.gitkeep

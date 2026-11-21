@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "postinstall": "prisma generate",
-    "dev": "([ -f node_modules/.prisma/client/index.js ] && [ ! prisma/schema.prisma -nt node_modules/.prisma/client/index.js ] || prisma generate) && tsx server.ts",
-    "start": "([ -f node_modules/.prisma/client/index.js ] && [ ! prisma/schema.prisma -nt node_modules/.prisma/client/index.js ] || prisma generate) && tsx server.ts",
-    "build": "([ -f node_modules/.prisma/client/index.js ] && [ ! prisma/schema.prisma -nt node_modules/.prisma/client/index.js ] || prisma generate) && vite build",
+    "dev": "node scripts/sync-db.mjs && tsx server.ts",
+    "start": "node scripts/sync-db.mjs && tsx server.ts",
+    "build": "node scripts/sync-db.mjs --generate-only && vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"
