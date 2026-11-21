@@ -10,19 +10,34 @@ const dbPath = path.join(prismaDir, 'charity.db');
 const backupsDir = path.join(prismaDir, 'backups');
 const hashPath = path.join(prismaDir, '.schema-sync.hash');
 const generatedClientIndex = path.join(rootDir, 'node_modules', '.prisma', 'client', 'index.js');
+const prismaCliJs = path.join(rootDir, 'node_modules', 'prisma', 'build', 'index.js');
 
 const generateOnly = process.argv.includes('--generate-only');
 
 function runPrisma(args) {
-  const isWin = process.platform === 'win32';
-  const localBin = path.join(rootDir, 'node_modules', '.bin', isWin ? 'prisma.cmd' : 'prisma');
-  const cmd = fs.existsSync(localBin) ? localBin : isWin ? 'npx.cmd' : 'npx';
-  const finalArgs = fs.existsSync(localBin) ? args : ['prisma', ...args];
-  return spawnSync(cmd, finalArgs, {
-    cwd: rootDir,
-    stdio: 'inherit',
-    env: process.env,
-  });
+  let result;
+  if (fs.existsSync(prismaCliJs)) {
+    // Run Prisma CLI directly via Node (100% cross-platform: Windows UCRT64/CMD/PowerShell, Linux, macOS)
+    result = spawnSync(process.execPath, [prismaCliJs, ...args], {
+      cwd: rootDir,
+      stdio: 'inherit',
+      env: process.env,
+    });
+  } else {
+    const isWin = process.platform === 'win32';
+    const cmd = isWin ? 'npx.cmd' : 'npx';
+    result = spawnSync(cmd, ['prisma', ...args], {
+      cwd: rootDir,
+      stdio: 'inherit',
+      env: process.env,
+      shell: isWin,
+    });
+  }
+
+  if (result.error) {
+    console.error(`[DB Sync] Failed to execute prisma ${args.join(' ')}:`, result.error.message || result.error);
+  }
+  return result;
 }
 
 if (!fs.existsSync(schemaPath)) {
@@ -51,7 +66,10 @@ if (generateOnly) {
 if (!hasClient || schemaChanged) {
   console.log('[DB Sync] Syncing Prisma Client with latest schema...');
   const genRes = runPrisma(['generate']);
-  if (genRes.status !== 0) process.exit(genRes.status || 1);
+  if (genRes.status !== 0) {
+    console.error('[DB Sync] Prisma Client generation failed (exit code:', genRes.status, ').');
+    process.exit(genRes.status || 1);
+  }
 }
 
 if (!hasDb || schemaChanged) {
