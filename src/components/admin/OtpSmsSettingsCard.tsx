@@ -63,7 +63,14 @@ export const OtpSmsSettingsCard: React.FC<OtpSmsSettingsCardProps> = ({
 
   // Save state
   const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [saveMsg, setSaveMsg] = useState<{
+    text: string;
+    type: 'success' | 'error';
+    hint?: string;
+    details?: string;
+    code?: string;
+  } | null>(null);
+  const [copiedError, setCopiedError] = useState(false);
 
   // Real OTP test state
   const [testPhone, setTestPhone] = useState(currentUser?.phone || '');
@@ -71,6 +78,9 @@ export const OtpSmsSettingsCard: React.FC<OtpSmsSettingsCardProps> = ({
   const [testResult, setTestResult] = useState<{
     type: 'success' | 'error';
     text: string;
+    hint?: string;
+    details?: string;
+    code?: string;
     preview?: string;
   } | null>(null);
 
@@ -163,20 +173,46 @@ export const OtpSmsSettingsCard: React.FC<OtpSmsSettingsCardProps> = ({
 
     setSaving(true);
     try {
-      const [updatedSms, updatedAppCfg] = await Promise.all([
-        api.updateSmsConfig({
+      let updatedSms: SmsConfig;
+      try {
+        updatedSms = await api.updateSmsConfig({
           apiKey: apiKey.trim(),
           senderLine: senderLine.trim(),
           loginOtpTemplate: loginOtpTemplate.trim(),
           loginOtpMessage: loginOtpMessage.trim(),
           isEnabled,
           provider: 'GHASEDAK',
-        }),
-        api.updateConfig({
+        });
+      } catch (smsErr: any) {
+        setSaveMsg({
+          type: 'error',
+          text: `مرحله ذخیره تنظیمات پیامک قاصدک ناموفق بود:\n${smsErr?.message || String(smsErr)}`,
+          hint: smsErr?.hint,
+          details: smsErr?.details,
+          code: smsErr?.code,
+        });
+        return;
+      }
+
+      let updatedAppCfg: AppConfig;
+      try {
+        updatedAppCfg = await api.updateConfig({
           appDomain: normalizedDomain,
           loginAllowOtp,
-        }),
-      ]);
+        });
+      } catch (cfgErr: any) {
+        setApiKey(updatedSms.apiKey || '');
+        setSenderLine(updatedSms.senderLine || '');
+        onSmsConfigSaved?.(updatedSms);
+        setSaveMsg({
+          type: 'error',
+          text: `تنظیمات قاصدک ذخیره شد اما ذخیره دامین/ورود OTP در تنظیمات سامانه ناموفق بود:\n${cfgErr?.message || String(cfgErr)}`,
+          hint: cfgErr?.hint,
+          details: cfgErr?.details,
+          code: cfgErr?.code,
+        });
+        return;
+      }
 
       setApiKey(updatedSms.apiKey || '');
       setSenderLine(updatedSms.senderLine || '');
@@ -196,7 +232,10 @@ export const OtpSmsSettingsCard: React.FC<OtpSmsSettingsCardProps> = ({
     } catch (err: any) {
       setSaveMsg({
         type: 'error',
-        text: err.message || 'خطا در ذخیره تنظیمات پیامک OTP و دامین',
+        text: err?.message || 'خطا در ذخیره تنظیمات پیامک OTP و دامین',
+        hint: err?.hint,
+        details: err?.details,
+        code: err?.code,
       });
     } finally {
       setSaving(false);
@@ -266,7 +305,10 @@ export const OtpSmsSettingsCard: React.FC<OtpSmsSettingsCardProps> = ({
     } catch (err: any) {
       setTestResult({
         type: 'error',
-        text: err.message || 'ارسال پیامک تست OTP ناموفق بود.',
+        text: err?.message || 'ارسال پیامک تست OTP ناموفق بود.',
+        hint: err?.hint,
+        details: err?.details,
+        code: err?.code,
       });
     } finally {
       setTestingOtp(false);
@@ -342,18 +384,39 @@ export const OtpSmsSettingsCard: React.FC<OtpSmsSettingsCardProps> = ({
         <form onSubmit={handleSaveAll} className="space-y-6 text-xs">
           {saveMsg && (
             <div
-              className={`p-3 rounded-xl border flex items-center gap-2 ${
+              className={`p-3.5 rounded-xl border space-y-2 ${
                 saveMsg.type === 'success'
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                  : 'bg-rose-50 border-rose-200 text-rose-700'
+                  : 'bg-rose-50 border-rose-200 text-rose-800'
               }`}
             >
-              {saveMsg.type === 'success' ? (
-                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-              ) : (
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-              )}
-              <span>{saveMsg.text}</span>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2">
+                  {saveMsg.type === 'success' ? (
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  )}
+                  <div className="whitespace-pre-line leading-relaxed font-medium">
+                    {saveMsg.text}
+                  </div>
+                </div>
+
+                {saveMsg.type === 'error' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(saveMsg.text);
+                      setCopiedError(true);
+                      setTimeout(() => setCopiedError(false), 2000);
+                    }}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 text-[11px] font-semibold shrink-0 cursor-pointer"
+                  >
+                    {copiedError ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedError ? 'کپی شد' : 'کپی خطا'}</span>
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
@@ -644,13 +707,13 @@ export const OtpSmsSettingsCard: React.FC<OtpSmsSettingsCardProps> = ({
             </div>
             {testResult && (
               <div
-                className={`p-2.5 rounded-xl border text-[11px] space-y-1 ${
+                className={`p-3 rounded-xl border text-[11px] space-y-1.5 ${
                   testResult.type === 'success'
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                    : 'bg-rose-50 border-rose-200 text-rose-700'
+                    : 'bg-rose-50 border-rose-200 text-rose-800'
                 }`}
               >
-                <p className="font-semibold">{testResult.text}</p>
+                <p className="font-semibold whitespace-pre-line leading-relaxed">{testResult.text}</p>
                 {testResult.preview && (
                   <pre className="whitespace-pre-wrap text-[10px] bg-white/70 rounded-lg p-2 border border-emerald-200/70 text-slate-700 font-sans">
                     {testResult.preview}

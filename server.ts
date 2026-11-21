@@ -48,6 +48,156 @@ function resolveServerPort(): number {
 const PORT = resolveServerPort();
 const AUTH_SECRET = process.env.AUTH_SECRET || 'kheirie-novinchoob-auth-secret-v1';
 
+interface StructuredServerError {
+  error: string;
+  code: string;
+  hint?: string;
+  details: string;
+}
+
+function formatServerError(err: any, actionFa: string): StructuredServerError {
+  const rawMessage = String(err?.message || err || 'خطای ناشناخته')
+    .replace(/\u001b\[[0-9;]*m/g, '')
+    .trim();
+  const compactDetails = rawMessage
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(-4)
+    .join(' | ');
+  const prismaCode = typeof err?.code === 'string' ? err.code : '';
+  const metaColumn = err?.meta?.column ? String(err.meta.column) : '';
+  const metaTable = err?.meta?.table ? String(err.meta.table) : '';
+
+  if (prismaCode === 'P2022' || /no such column|does not exist in the current database/i.test(rawMessage)) {
+    const colLabel = metaColumn || (rawMessage.match(/column [`"']?([^`"'\s]+)[`"']?/i)?.[1] ?? '');
+    return {
+      error: `${actionFa}: ستون ${colLabel ? `«${colLabel}»` : 'جدید'} در جدول دیتابیس وجود ندارد (دیتابیس قدیمی است و با نسخه جدید همگام نشده).`,
+      code: prismaCode || 'DB_COLUMN_MISSING',
+      hint: 'دستور «npx prisma db push» را در مسیر پروژه اجرا کرده و سرور را مجدداً راه‌اندازی کنید.',
+      details: compactDetails,
+    };
+  }
+
+  if (prismaCode === 'P2021' || /no such table/i.test(rawMessage)) {
+    const tblLabel = metaTable || (rawMessage.match(/table [`"']?([^`"'\s]+)[`"']?/i)?.[1] ?? '');
+    return {
+      error: `${actionFa}: جدول ${tblLabel ? `«${tblLabel}»` : 'مورد نظر'} در فایل دیتابیس یافت نشد.`,
+      code: prismaCode || 'DB_TABLE_MISSING',
+      hint: 'دستور «npx prisma db push» را اجرا کرده و از وجود فایل prisma/charity.db مطمئن شوید.',
+      details: compactDetails,
+    };
+  }
+
+  if (/Unknown argument|Unknown field|PrismaClientValidationError/i.test(rawMessage)) {
+    const argMatch = rawMessage.match(/Unknown (?:argument|field) [`"']?([^`"'\s.]+)[`"']?/i)?.[1] || '';
+    return {
+      error: `${actionFa}: کلاینت دیتابیس (Prisma Client) قدیمی است و فیلد ${argMatch ? `«${argMatch}»` : 'جدید'} را نمی‌شناسد.`,
+      code: 'PRISMA_CLIENT_STALE',
+      hint: 'دستورات «npx prisma generate && npx prisma db push» را اجرا و سرور را ریستارت کنید.',
+      details: compactDetails,
+    };
+  }
+
+  if (/readonly database|SQLITE_READONLY|EACCES|EPERM/i.test(rawMessage)) {
+    return {
+      error: `${actionFa}: فایل دیتابیس فقط‌خواندنی (Read-Only) است یا سرور مجوز نوشتن ندارد.`,
+      code: 'DB_READONLY',
+      hint: 'مجوز نوشتن فایل prisma/charity.db و پوشه prisma را برای کاربر اجراکننده سرور بررسی کنید (chmod / chown).',
+      details: compactDetails,
+    };
+  }
+
+  if (/database is locked|SQLITE_BUSY/i.test(rawMessage)) {
+    return {
+      error: `${actionFa}: دیتابیس موقتاً در حال نوشتن و قفل است (SQLITE_BUSY).`,
+      code: 'DB_LOCKED',
+      hint: 'چند ثانیه صبر کرده و دوباره دکمه ذخیره را بزنید.',
+      details: compactDetails,
+    };
+  }
+
+  if (/Unable to open the database file|SQLITE_CANTOPEN|ENOENT/i.test(rawMessage)) {
+    return {
+      error: `${actionFa}: فایل دیتابیس (prisma/charity.db) قابل باز کردن یا دسترسی نیست.`,
+      code: 'DB_CANTOPEN',
+      hint: 'مسیر پوشه prisma و دسترسی فایل charity.db را روی سرور بررسی کنید.',
+      details: compactDetails,
+    };
+  }
+
+  if (prismaCode === 'P2002') {
+    const target = Array.isArray(err?.meta?.target) ? err.meta.target.join(', ') : String(err?.meta?.target || '');
+    return {
+      error: `${actionFa}: مقدار تکراری ثبت شده است${target ? ` (${target})` : ''}.`,
+      code: 'P2002',
+      details: compactDetails,
+    };
+  }
+
+  return {
+    error: `${actionFa}: ${compactDetails || 'خطای داخلی سرور'}`,
+    code: prismaCode || 'INTERNAL_SERVER_ERROR',
+    details: compactDetails,
+  };
+}
+
+let schemaHealPromise: Promise<void> | null = null;
+
+async function ensureDatabaseSchema(): Promise<void> {
+  if (schemaHealPromise) return schemaHealPromise;
+  schemaHealPromise = (async () => {
+    const migrations: Array<{ table: string; column: string; ddl: string }> = [
+      { table: 'AppConfig', column: 'loginTitle', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginTitle" TEXT NOT NULL DEFAULT 'ورود به پنل کادر خیریه'` },
+      { table: 'AppConfig', column: 'loginSubtitle', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginSubtitle" TEXT NOT NULL DEFAULT ''` },
+      { table: 'AppConfig', column: 'loginWelcomeNote', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginWelcomeNote" TEXT NOT NULL DEFAULT ''` },
+      { table: 'AppConfig', column: 'loginFooterText', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginFooterText" TEXT NOT NULL DEFAULT 'دسترسی اختصاصی کادر و مدیران مجاز مؤسسه'` },
+      { table: 'AppConfig', column: 'loginTheme', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginTheme" TEXT NOT NULL DEFAULT 'emerald'` },
+      { table: 'AppConfig', column: 'loginBgDataUrl', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginBgDataUrl" TEXT` },
+      { table: 'AppConfig', column: 'loginShowLogo', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginShowLogo" BOOLEAN NOT NULL DEFAULT true` },
+      { table: 'AppConfig', column: 'loginAllowPassword', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginAllowPassword" BOOLEAN NOT NULL DEFAULT true` },
+      { table: 'AppConfig', column: 'loginAllowOtp', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginAllowOtp" BOOLEAN NOT NULL DEFAULT true` },
+      { table: 'AppConfig', column: 'loginShowBackLink', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "loginShowBackLink" BOOLEAN NOT NULL DEFAULT true` },
+      { table: 'AppConfig', column: 'appDomain', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "appDomain" TEXT NOT NULL DEFAULT ''` },
+      { table: 'AppConfig', column: 'publicFormConfig', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "publicFormConfig" TEXT NOT NULL DEFAULT ''` },
+      { table: 'SmsConfig', column: 'loginOtpTemplate', ddl: `ALTER TABLE "SmsConfig" ADD COLUMN "loginOtpTemplate" TEXT NOT NULL DEFAULT ''` },
+      { table: 'SmsConfig', column: 'loginOtpMessage', ddl: `ALTER TABLE "SmsConfig" ADD COLUMN "loginOtpMessage" TEXT NOT NULL DEFAULT ''` },
+      { table: 'User', column: 'phone', ddl: `ALTER TABLE "User" ADD COLUMN "phone" TEXT` },
+      { table: 'User', column: 'isActive', ddl: `ALTER TABLE "User" ADD COLUMN "isActive" BOOLEAN NOT NULL DEFAULT true` },
+      { table: 'BeneficiaryRequest', column: 'customFields', ddl: `ALTER TABLE "BeneficiaryRequest" ADD COLUMN "customFields" TEXT NOT NULL DEFAULT '[]'` },
+      { table: 'BeneficiaryRequest', column: 'beneficiaryId', ddl: `ALTER TABLE "BeneficiaryRequest" ADD COLUMN "beneficiaryId" TEXT` },
+      { table: 'CustomForm', column: 'showInBeneficiaryPortal', ddl: `ALTER TABLE "CustomForm" ADD COLUMN "showInBeneficiaryPortal" BOOLEAN NOT NULL DEFAULT false` },
+      { table: 'CustomForm', column: 'maxFileSizeMB', ddl: `ALTER TABLE "CustomForm" ADD COLUMN "maxFileSizeMB" INTEGER NOT NULL DEFAULT 5` },
+      { table: 'CustomForm', column: 'smsRules', ddl: `ALTER TABLE "CustomForm" ADD COLUMN "smsRules" TEXT NOT NULL DEFAULT '[]'` },
+      { table: 'CustomFormSubmission', column: 'beneficiaryId', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "beneficiaryId" TEXT` },
+      { table: 'CustomFormSubmission', column: 'expertMessage', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "expertMessage" TEXT` },
+      { table: 'CustomFormSubmission', column: 'expertMessageAt', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "expertMessageAt" DATETIME` },
+      { table: 'CustomFormSubmission', column: 'expertMessageBy', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "expertMessageBy" TEXT` },
+    ];
+
+    const tableColsCache = new Map<string, Set<string>>();
+    for (const m of migrations) {
+      try {
+        if (!tableColsCache.has(m.table)) {
+          const rows = (await prisma.$queryRawUnsafe(`PRAGMA table_info("${m.table}")`)) as Array<{ name: string }>;
+          tableColsCache.set(m.table, new Set(rows.map((r) => r.name)));
+        }
+        const cols = tableColsCache.get(m.table)!;
+        if (cols.size > 0 && !cols.has(m.column)) {
+          await prisma.$executeRawUnsafe(m.ddl);
+          cols.add(m.column);
+          console.log(`[DB Auto-Migrate] Added missing column ${m.table}.${m.column}`);
+        }
+      } catch (err) {
+        console.error(`[DB Auto-Migrate] Failed checking/adding ${m.table}.${m.column}:`, err);
+      }
+    }
+  })().finally(() => {
+    schemaHealPromise = null;
+  });
+  return schemaHealPromise;
+}
+
 // --- Auth & Phone Helpers ---
 function normalizeDigits(input: string): string {
   if (!input) return '';
@@ -418,8 +568,18 @@ app.get('/api/config', async (_req, res) => {
       });
     }
     res.json(config);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch config', details: String(error) });
+  } catch (error: any) {
+    if (error?.code === 'P2022' || /no such column/i.test(String(error))) {
+      try {
+        await ensureDatabaseSchema();
+        const config = await prisma.appConfig.findUnique({ where: { id: 1 } });
+        if (config) return res.json(config);
+      } catch (retryErr) {
+        console.error('GET /api/config auto-heal retry error:', retryErr);
+      }
+    }
+    console.error('GET /api/config error:', error);
+    res.status(500).json(formatServerError(error, 'خطا در دریافت تنظیمات سامانه'));
   }
 });
 
@@ -451,14 +611,39 @@ app.put('/api/config', requireAuth, requirePerm('manageSettings'), async (req, r
         updateData[key] = key === 'appDomain' ? normalizeAppDomain(req.body[key]) : req.body[key];
       }
     }
-    const config = await prisma.appConfig.upsert({
-      where: { id: 1 },
-      update: updateData,
-      create: { id: 1, ...updateData },
-    });
+    const runUpsert = () =>
+      prisma.appConfig.upsert({
+        where: { id: 1 },
+        update: updateData,
+        create: { id: 1, ...updateData },
+      });
+
+    let config: any;
+    try {
+      config = await runUpsert();
+    } catch (err: any) {
+      if (err?.code === 'P2022' || /no such column/i.test(String(err))) {
+        await ensureDatabaseSchema();
+        config = await runUpsert();
+      } else if (/Unknown argument/i.test(String(err)) && updateData.appDomain !== undefined) {
+        // Fallback when deployed Prisma Client wasn't regenerated yet
+        await ensureDatabaseSchema();
+        const { appDomain: rawDom, ...restData } = updateData;
+        const baseCfg = await prisma.appConfig.upsert({
+          where: { id: 1 },
+          update: restData,
+          create: { id: 1, ...restData },
+        });
+        await prisma.$executeRaw`UPDATE "AppConfig" SET "appDomain" = ${String(rawDom || '')} WHERE "id" = 1`;
+        config = { ...baseCfg, appDomain: String(rawDom || '') };
+      } else {
+        throw err;
+      }
+    }
     res.json(config);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update config', details: String(error) });
+    console.error('PUT /api/config error:', error);
+    res.status(500).json(formatServerError(error, 'خطا در ذخیره تنظیمات سامانه'));
   }
 });
 
@@ -1622,7 +1807,7 @@ app.post('/api/restore', requireAuth, requirePerm('manageSettings'), async (req,
 
 // 1. Get / Update SMS Config
 app.get('/api/sms/config', requireAuth, requirePerm('manageSettings'), async (_req, res) => {
-  try {
+  const fetchOrCreate = async () => {
     let conf = await prisma.smsConfig.findUnique({ where: { id: 1 } });
     if (!conf) {
       conf = await prisma.smsConfig.create({
@@ -1637,42 +1822,102 @@ app.get('/api/sms/config', requireAuth, requirePerm('manageSettings'), async (_r
         },
       });
     }
+    return conf;
+  };
+  try {
+    let conf: any;
+    try {
+      conf = await fetchOrCreate();
+    } catch (err: any) {
+      if (err?.code === 'P2022' || /no such column/i.test(String(err))) {
+        await ensureDatabaseSchema();
+        conf = await fetchOrCreate();
+      } else {
+        throw err;
+      }
+    }
     res.json(conf);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch SMS config', details: String(error) });
+    console.error('GET /api/sms/config error:', error);
+    res.status(500).json(formatServerError(error, 'خطا در دریافت تنظیمات پیامک قاصدک'));
   }
 });
 
 app.put('/api/sms/config', requireAuth, requirePerm('manageSettings'), async (req, res) => {
   try {
-    const { apiKey, senderLine, provider, loginOtpTemplate, loginOtpMessage, isEnabled } = req.body;
+    const { apiKey, senderLine, provider, loginOtpTemplate, loginOtpMessage, isEnabled } = req.body || {};
     const cleanKey = apiKey !== undefined ? String(apiKey).trim() : undefined;
     const cleanLine = senderLine !== undefined ? String(senderLine).trim() : undefined;
     const cleanTemplate = loginOtpTemplate !== undefined ? String(loginOtpTemplate).trim() : undefined;
     const cleanOtpMsg = loginOtpMessage !== undefined ? String(loginOtpMessage).trim() : undefined;
-    const conf = await prisma.smsConfig.upsert({
-      where: { id: 1 },
-      update: {
-        apiKey: cleanKey,
-        senderLine: cleanLine,
-        provider: provider || 'GHASEDAK',
-        loginOtpTemplate: cleanTemplate,
-        loginOtpMessage: cleanOtpMsg,
-        isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
-      },
-      create: {
-        id: 1,
-        apiKey: cleanKey || '',
-        senderLine: cleanLine || '',
-        provider: provider || 'GHASEDAK',
-        loginOtpTemplate: cleanTemplate || '',
-        loginOtpMessage: cleanOtpMsg || '',
-        isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
-      },
-    });
+
+    const runUpsert = () =>
+      prisma.smsConfig.upsert({
+        where: { id: 1 },
+        update: {
+          apiKey: cleanKey,
+          senderLine: cleanLine,
+          provider: provider || 'GHASEDAK',
+          loginOtpTemplate: cleanTemplate,
+          loginOtpMessage: cleanOtpMsg,
+          isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
+        },
+        create: {
+          id: 1,
+          apiKey: cleanKey || '',
+          senderLine: cleanLine || '',
+          provider: provider || 'GHASEDAK',
+          loginOtpTemplate: cleanTemplate || '',
+          loginOtpMessage: cleanOtpMsg || '',
+          isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
+        },
+      });
+
+    let conf: any;
+    try {
+      conf = await runUpsert();
+    } catch (err: any) {
+      if (err?.code === 'P2022' || /no such column/i.test(String(err))) {
+        await ensureDatabaseSchema();
+        conf = await runUpsert();
+      } else if (/Unknown argument/i.test(String(err))) {
+        // Fallback when deployed Prisma Client hasn't been regenerated yet
+        await ensureDatabaseSchema();
+        const baseConf = await prisma.smsConfig.upsert({
+          where: { id: 1 },
+          update: {
+            apiKey: cleanKey,
+            senderLine: cleanLine,
+            provider: provider || 'GHASEDAK',
+            isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
+          },
+          create: {
+            id: 1,
+            apiKey: cleanKey || '',
+            senderLine: cleanLine || '',
+            provider: provider || 'GHASEDAK',
+            isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
+          },
+        });
+        if (cleanTemplate !== undefined) {
+          await prisma.$executeRaw`UPDATE "SmsConfig" SET "loginOtpTemplate" = ${cleanTemplate} WHERE "id" = 1`;
+        }
+        if (cleanOtpMsg !== undefined) {
+          await prisma.$executeRaw`UPDATE "SmsConfig" SET "loginOtpMessage" = ${cleanOtpMsg} WHERE "id" = 1`;
+        }
+        conf = {
+          ...baseConf,
+          loginOtpTemplate: cleanTemplate ?? (baseConf as any).loginOtpTemplate ?? '',
+          loginOtpMessage: cleanOtpMsg ?? (baseConf as any).loginOtpMessage ?? '',
+        };
+      } else {
+        throw err;
+      }
+    }
     res.json(conf);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update SMS config', details: String(error) });
+    console.error('PUT /api/sms/config error:', error);
+    res.status(500).json(formatServerError(error, 'خطا در ذخیره تنظیمات پیامک قاصدک'));
   }
 });
 
@@ -1980,7 +2225,8 @@ app.post('/api/sms/test-otp', requireAuth, requirePerm('manageSettings'), async 
       previewMessage: usePattern ? `ارسال از طریق الگوی قاصدک (${effectiveTemplate}) با کد ${sampleCode}` : messageText,
     });
   } catch (error) {
-    res.status(500).json({ error: 'خطا در تست ارسال کد OTP', details: String(error) });
+    console.error('POST /api/sms/test-otp error:', error);
+    res.status(500).json(formatServerError(error, 'خطا در تست ارسال کد OTP'));
   }
 });
 
@@ -3156,6 +3402,7 @@ app.put(
 
 // Vite Middleware or Static Production Serving
 async function startServer() {
+  await ensureDatabaseSchema();
   await ensureDefaultEntities();
   const isProd = process.env.NODE_ENV === 'production';
 

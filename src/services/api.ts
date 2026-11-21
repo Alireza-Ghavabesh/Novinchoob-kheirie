@@ -22,13 +22,43 @@ export const BENEFICIARY_TOKEN_KEY = 'OM_CHARITY_BENEFICIARY_TOKEN';
 let unauthorizedHandler: (() => void) | null = null;
 let beneficiaryUnauthorizedHandler: (() => void) | null = null;
 
+export class ApiError extends Error {
+  status?: number;
+  code?: string;
+  hint?: string;
+  details?: string;
+
+  constructor(
+    message: string,
+    opts?: { status?: number; code?: string; hint?: string; details?: string }
+  ) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = opts?.status;
+    this.code = opts?.code;
+    this.hint = opts?.hint;
+    this.details = opts?.details;
+  }
+}
+
 async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const token = typeof window !== 'undefined' ? localStorage.getItem(AUTH_TOKEN_KEY) : null;
   const headers = new Headers(options.headers || {});
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const res = await fetch(url, { ...options, headers });
+  let res: Response;
+  try {
+    res = await fetch(url, { ...options, headers });
+  } catch (networkErr: any) {
+    throw new ApiError(
+      `عدم امکان ارتباط با سرور (${url}). لطفاً اتصال شبکه و روشن بودن سرور را بررسی کنید.`,
+      {
+        code: 'NETWORK_ERROR',
+        details: networkErr?.message || String(networkErr),
+      }
+    );
+  }
   if (res.status === 401) {
     unauthorizedHandler?.();
   }
@@ -47,7 +77,18 @@ async function beneficiaryAuthFetch(
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const res = await fetch(url, { ...options, headers });
+  let res: Response;
+  try {
+    res = await fetch(url, { ...options, headers });
+  } catch (networkErr: any) {
+    throw new ApiError(
+      `عدم امکان ارتباط با سرور (${url}). لطفاً اتصال اینترنت خود را بررسی کنید.`,
+      {
+        code: 'NETWORK_ERROR',
+        details: networkErr?.message || String(networkErr),
+      }
+    );
+  }
   if (res.status === 401 && !explicitToken) {
     beneficiaryUnauthorizedHandler?.();
   }
@@ -63,7 +104,34 @@ async function parseJsonOrThrow<T>(res: Response, fallbackMessage: string): Prom
     data = null;
   }
   if (!res.ok) {
-    throw new Error(data?.error || fallbackMessage);
+    const baseMsg =
+      data?.error ||
+      (text && !data
+        ? `${fallbackMessage} (کد وضعیت HTTP ${res.status})`
+        : fallbackMessage);
+    const hint = typeof data?.hint === 'string' && data.hint.trim() ? data.hint.trim() : undefined;
+    const rawDetails =
+      typeof data?.details === 'string' && data.details.trim()
+        ? data.details.trim()
+        : !data && text
+          ? text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 260)
+          : undefined;
+    const code = typeof data?.code === 'string' && data.code.trim() ? data.code.trim() : `HTTP_${res.status}`;
+
+    const parts: string[] = [baseMsg];
+    if (hint) {
+      parts.push(`راهکار: ${hint}`);
+    }
+    if (rawDetails && !baseMsg.includes(rawDetails)) {
+      parts.push(`جزئیات فنی [${code}]: ${rawDetails}`);
+    }
+
+    throw new ApiError(parts.join('\n'), {
+      status: res.status,
+      code,
+      hint,
+      details: rawDetails,
+    });
   }
   return data as T;
 }

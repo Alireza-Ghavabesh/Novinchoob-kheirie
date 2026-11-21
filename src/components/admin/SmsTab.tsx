@@ -131,7 +131,9 @@ export const SmsTab: React.FC<SmsTabProps> = ({
 
   const notify = (text: string, type: 'success' | 'error' = 'success') => {
     setStatusMsg({ text, type });
-    setTimeout(() => setStatusMsg(null), 4000);
+    if (type === 'success') {
+      setTimeout(() => setStatusMsg((prev) => (prev?.text === text ? null : prev)), 4000);
+    }
   };
 
   const handleToggleGlobalEnable = async () => {
@@ -433,14 +435,27 @@ export const SmsTab: React.FC<SmsTabProps> = ({
       {/* Status Alert Notification */}
       {statusMsg && (
         <div
-          className={`p-3.5 rounded-xl text-xs flex items-center gap-2 animate-in fade-in duration-200 ${
+          className={`p-3.5 rounded-xl text-xs flex items-start justify-between gap-2 animate-in fade-in duration-200 ${
             statusMsg.type === 'success'
               ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
               : 'bg-rose-50 text-rose-800 border border-rose-200'
           }`}
         >
-          {statusMsg.type === 'success' ? <CheckCircle className="w-4 h-4 text-emerald-600" /> : <AlertTriangle className="w-4 h-4 text-rose-600" />}
-          <span className="font-medium">{statusMsg.text}</span>
+          <div className="flex items-start gap-2">
+            {statusMsg.type === 'success' ? (
+              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            )}
+            <span className="font-medium whitespace-pre-line leading-relaxed">{statusMsg.text}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStatusMsg(null)}
+            className="text-[11px] font-bold opacity-70 hover:opacity-100 px-1.5 py-0.5 rounded cursor-pointer shrink-0"
+          >
+            بستن
+          </button>
         </div>
       )}
 
