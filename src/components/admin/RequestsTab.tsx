@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   AppConfig,
   BeneficiaryRequest,
   Category,
+  CustomForm,
+  SmsTemplate,
   StaffUser,
 } from '../../types';
 import {
@@ -24,7 +26,6 @@ import {
 } from '../DynamicFieldRenderer';
 import {
   Search,
-  Filter,
   Plus,
   CheckCircle,
   AlertTriangle,
@@ -46,8 +47,14 @@ import {
   MessageSquare,
   Smartphone,
   Send,
+  ClipboardList,
+  FileText,
+  RefreshCw,
+  ShieldAlert,
 } from 'lucide-react';
 import { api } from '../../services/api';
+import { hasPermission, renderSmsTemplatePreview } from '../../utils/permissions';
+import { CustomFormApplicantsPanel } from './CustomFormApplicantsPanel';
 
 interface RequestsTabProps {
   requests: BeneficiaryRequest[];
@@ -71,6 +78,35 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
     [config?.publicFormConfig]
   );
 
+  // Form Switcher State ('PUBLIC' or customForm.id)
+  const [activeFormId, setActiveFormId] = useState<string>('PUBLIC');
+  const [customForms, setCustomForms] = useState<CustomForm[]>([]);
+  const [loadingForms, setLoadingForms] = useState<boolean>(false);
+  const [smsTemplates, setSmsTemplates] = useState<SmsTemplate[]>([]);
+
+  const activeSmsTemplates = useMemo(
+    () => smsTemplates.filter((t) => t.isActive),
+    [smsTemplates]
+  );
+
+  const loadFormsAndTemplates = useCallback(async () => {
+    setLoadingForms(true);
+    try {
+      const [formsRes, tplRes] = await Promise.all([
+        api.getForms().catch(() => [] as CustomForm[]),
+        api.getSmsTemplates(false).catch(() => [] as SmsTemplate[]),
+      ]);
+      setCustomForms(formsRes);
+      setSmsTemplates(tplRes);
+    } finally {
+      setLoadingForms(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadFormsAndTemplates();
+  }, [loadFormsAndTemplates]);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [catFilter, setCatFilter] = useState('ALL');
@@ -85,16 +121,19 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
   const [needsInfoReq, setNeedsInfoReq] = useState<BeneficiaryRequest | null>(null);
   const [needsInfoNote, setNeedsInfoNote] = useState('');
   const [needsInfoSendInApp, setNeedsInfoSendInApp] = useState(true);
-  const [needsInfoSendSms, setNeedsInfoSendSms] = useState(true);
+  const [needsInfoSendSms, setNeedsInfoSendSms] = useState(false);
+  const [needsInfoSmsTemplateId, setNeedsInfoSmsTemplateId] = useState<number | null>(null);
   const [needsInfoSendPush, setNeedsInfoSendPush] = useState(true);
+  const [needsInfoError, setNeedsInfoError] = useState('');
   const [needsInfoSubmitting, setNeedsInfoSubmitting] = useState(false);
 
-  // Direct Notify Modal State (Bell + SMS + Push)
+  // Direct Notify Modal State (Bell + Approved SMS Template + Push)
   const [notifyReq, setNotifyReq] = useState<BeneficiaryRequest | null>(null);
   const [notifyTitle, setNotifyTitle] = useState('');
   const [notifyMessage, setNotifyMessage] = useState('');
   const [notifySendInApp, setNotifySendInApp] = useState(true);
-  const [notifySendSms, setNotifySendSms] = useState(true);
+  const [notifySendSms, setNotifySendSms] = useState(false);
+  const [notifySmsTemplateId, setNotifySmsTemplateId] = useState<number | null>(null);
   const [notifySendPush, setNotifySendPush] = useState(true);
   const [notifyAlsoSaveNote, setNotifyAlsoSaveNote] = useState(true);
   const [notifySubmitting, setNotifySubmitting] = useState(false);
@@ -132,8 +171,26 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
     }
   }, [formSchema.guardianOptions, formSchema.housingOptions, newReqGuardian, newReqHousing]);
 
-  // Permissions
-  const canDecide = currentUser.username === 'admin' || Boolean(currentUser.perms?.decideInbox);
+  // Granular Permissions
+  const canCreate = hasPermission(currentUser, 'createRequest');
+  const canDecide = hasPermission(currentUser, 'decideInbox');
+  const canDelete = hasPermission(currentUser, 'deleteInbox');
+  const canExport = hasPermission(currentUser, 'exportInbox');
+  const canSendBell = hasPermission(currentUser, 'sendBeneficiaryBell');
+  const canSendSms = hasPermission(currentUser, 'sendBeneficiarySms');
+  const canSendPush = hasPermission(currentUser, 'sendBeneficiaryPush');
+  const canSendAnyNotify = canSendBell || canSendSms || canSendPush;
+
+  const selectedCustomForm = useMemo(
+    () => customForms.find((f) => f.id === activeFormId) || null,
+    [customForms, activeFormId]
+  );
+
+  const handleSubmissionCountChange = useCallback((formId: string, count: number) => {
+    setCustomForms((prev) =>
+      prev.map((f) => (f.id === formId ? { ...f, submissionsCount: count } : f))
+    );
+  }, []);
 
   // KPIs
   const totalCount = requests.length;
@@ -195,24 +252,56 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
     setNotifyReq(req);
     setNotifyTitle(`پیام کارشناس درباره پرونده ${req.trackingCode}`);
     setNotifyMessage(req.note || '');
-    setNotifySendInApp(true);
-    setNotifySendSms(true);
-    setNotifySendPush(true);
+    setNotifySendInApp(canSendBell);
+    setNotifySendSms(canSendSms && activeSmsTemplates.length > 0);
+    setNotifySmsTemplateId(activeSmsTemplates[0]?.id ?? null);
+    setNotifySendPush(canSendPush);
     setNotifyAlsoSaveNote(true);
     setNotifyResultMsg('');
     setNotifyErrorMsg('');
   };
 
+  const openNeedsInfoModal = (req: BeneficiaryRequest) => {
+    setNeedsInfoReq(req);
+    setNeedsInfoNote(req.note || '');
+    setNeedsInfoSendInApp(canSendBell);
+    setNeedsInfoSendSms(false);
+    setNeedsInfoSmsTemplateId(activeSmsTemplates[0]?.id ?? null);
+    setNeedsInfoSendPush(canSendPush);
+    setNeedsInfoError('');
+  };
+
   const handleSendDirectNotification = async () => {
     if (!notifyReq) return;
-    if (!notifyMessage.trim()) {
-      setNotifyErrorMsg('لطفاً متن پیام برای مددجو را وارد کنید.');
+    const effectiveInApp = canSendBell && notifySendInApp;
+    const effectiveSms = canSendSms && notifySendSms;
+    const effectivePush = canSendPush && notifySendPush;
+
+    if (!effectiveInApp && !effectiveSms && !effectivePush) {
+      setNotifyErrorMsg('حداقل یکی از کانال‌های مجاز ارسال (زنگوله پروفایل، پیامک یا پوش نوتیفیکیشن) را انتخاب کنید.');
       return;
     }
-    if (!notifySendInApp && !notifySendSms && !notifySendPush) {
-      setNotifyErrorMsg('حداقل یکی از کانال‌های ارسال (زنگوله پروفایل، پیامک یا پوش نوتیفیکیشن) را انتخاب کنید.');
+    if ((effectiveInApp || effectivePush) && !notifyMessage.trim()) {
+      setNotifyErrorMsg('لطفاً متن پیام برای نمایش در زنگوله یا پوش نوتیفیکیشن را وارد کنید.');
       return;
     }
+    if (effectiveSms && !notifySmsTemplateId) {
+      setNotifyErrorMsg('برای ارسال پیامک، انتخاب یکی از متن‌های مجاز ثبت‌شده توسط ادمین الزامی است.');
+      return;
+    }
+
+    const chosenTpl = activeSmsTemplates.find((t) => t.id === notifySmsTemplateId);
+    const effectiveMessage =
+      notifyMessage.trim() ||
+      (chosenTpl
+        ? renderSmsTemplatePreview(chosenTpl.body, {
+            name: notifyReq.name,
+            trackingCode: notifyReq.trackingCode,
+            instName: config?.instName,
+            formTitle: formSchema.title,
+          })
+        : '');
+
     setNotifySubmitting(true);
     setNotifyErrorMsg('');
     setNotifyResultMsg('');
@@ -220,15 +309,17 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
       const { result } = await api.sendBeneficiaryNotification({
         requestId: notifyReq.id,
         beneficiaryId: notifyReq.beneficiaryId || null,
+        beneficiaryName: notifyReq.name,
         phone: notifyReq.phone,
         title: notifyTitle.trim() || `پیام کارشناس درباره پرونده ${notifyReq.trackingCode}`,
-        message: notifyMessage.trim(),
+        message: effectiveMessage,
         formId: 'PUBLIC_REQUEST',
         formTitle: formSchema.title,
         trackingCode: notifyReq.trackingCode,
-        sendInApp: notifySendInApp,
-        sendSms: notifySendSms,
-        sendPush: notifySendPush,
+        sendInApp: effectiveInApp,
+        sendSms: effectiveSms,
+        smsTemplateId: effectiveSms ? notifySmsTemplateId : null,
+        sendPush: effectivePush,
         alsoSaveNote: notifyAlsoSaveNote,
       });
 
@@ -259,7 +350,17 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
 
   const handleConfirmNeedsInfo = async () => {
     if (!needsInfoReq) return;
+    const effectiveInApp = canSendBell && needsInfoSendInApp;
+    const effectiveSms = canSendSms && needsInfoSendSms;
+    const effectivePush = canSendPush && needsInfoSendPush;
+
+    if (effectiveSms && !needsInfoSmsTemplateId) {
+      setNeedsInfoError('برای ارسال پیامک نقص مدارک، انتخاب یک متن مجاز از لیست الزامی است.');
+      return;
+    }
+
     const msg = needsInfoNote.trim() || 'نیازمند ارائه مدارک تکمیلی و فاکتورها';
+    setNeedsInfoError('');
     setNeedsInfoSubmitting(true);
     try {
       await api.updateRequest(needsInfoReq.id, {
@@ -267,20 +368,22 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
         note: msg,
       });
 
-      if (needsInfoSendInApp || needsInfoSendSms || needsInfoSendPush) {
+      if (effectiveInApp || effectiveSms || effectivePush) {
         await api
           .sendBeneficiaryNotification({
             requestId: needsInfoReq.id,
             beneficiaryId: needsInfoReq.beneficiaryId || null,
+            beneficiaryName: needsInfoReq.name,
             phone: needsInfoReq.phone,
             title: `درخواست تکمیل مدارک (${needsInfoReq.trackingCode})`,
             message: msg,
             formId: 'PUBLIC_REQUEST',
             formTitle: formSchema.title,
             trackingCode: needsInfoReq.trackingCode,
-            sendInApp: needsInfoSendInApp,
-            sendSms: needsInfoSendSms,
-            sendPush: needsInfoSendPush,
+            sendInApp: effectiveInApp,
+            sendSms: effectiveSms,
+            smsTemplateId: effectiveSms ? needsInfoSmsTemplateId : null,
+            sendPush: effectivePush,
           })
           .catch(() => undefined);
       }
@@ -456,8 +559,109 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
     }, 300);
   };
 
+  const selectedNotifySmsTpl = useMemo(
+    () => activeSmsTemplates.find((t) => t.id === notifySmsTemplateId) || null,
+    [activeSmsTemplates, notifySmsTemplateId]
+  );
+
+  const selectedNeedsInfoSmsTpl = useMemo(
+    () => activeSmsTemplates.find((t) => t.id === needsInfoSmsTemplateId) || null,
+    [activeSmsTemplates, needsInfoSmsTemplateId]
+  );
+
   return (
     <div className="space-y-6">
+      {/* Per-Form Applicants Switcher Bar */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3.5 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <ClipboardList className="w-4 h-4 text-emerald-700" />
+            <span className="text-xs font-extrabold text-slate-800">
+              فهرست متقاضیان بر اساس فرم‌های سامانه
+            </span>
+            <span className="text-[11px] text-slate-400 hidden sm:inline">
+              ({toPersianDigits(customForms.length + 1)} فهرست مجزا)
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={loadFormsAndTemplates}
+            disabled={loadingForms}
+            title="بروزرسانی فهرست فرم‌ها"
+            className="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-emerald-700 px-2 py-1 rounded-lg hover:bg-emerald-50 transition cursor-pointer"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingForms ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">بروزرسانی فرم‌ها</span>
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Main Public Request Form Tab */}
+          <button
+            type="button"
+            onClick={() => setActiveFormId('PUBLIC')}
+            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+              activeFormId === 'PUBLIC'
+                ? 'bg-emerald-700 text-white border-emerald-700 shadow-sm'
+                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-900'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5 shrink-0" />
+            <span>{formSchema.title || 'فرم درخواست عمومی (اصلی)'}</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                activeFormId === 'PUBLIC'
+                  ? 'bg-white/20 text-white'
+                  : 'bg-emerald-100 text-emerald-800'
+              }`}
+            >
+              {toPersianDigits(requests.length)}
+            </span>
+          </button>
+
+          {/* Dynamic Tabs for Every Custom Form Built in Form Builder */}
+          {customForms.map((cf) => {
+            const isSelected = activeFormId === cf.id;
+            return (
+              <button
+                key={cf.id}
+                type="button"
+                onClick={() => setActiveFormId(cf.id)}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  isSelected
+                    ? 'bg-indigo-700 text-white border-indigo-700 shadow-sm'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-900'
+                }`}
+              >
+                <ClipboardList className="w-3.5 h-3.5 shrink-0" />
+                <span className="max-w-[190px] truncate">{cf.title}</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                    isSelected
+                      ? 'bg-white/20 text-white'
+                      : 'bg-indigo-100 text-indigo-800'
+                  }`}
+                >
+                  {toPersianDigits(cf.submissionsCount ?? 0)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Render Custom Form Applicants List if a Custom Form is Selected */}
+      {activeFormId !== 'PUBLIC' && selectedCustomForm ? (
+        <CustomFormApplicantsPanel
+          key={selectedCustomForm.id}
+          form={selectedCustomForm}
+          currentUser={currentUser}
+          config={config}
+          smsTemplates={smsTemplates}
+          onSubmissionCountChange={handleSubmissionCountChange}
+        />
+      ) : (
+        <>
       {/* KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -543,22 +747,26 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
           </select>
 
           {/* Export CSV */}
-          <button
-            onClick={exportCSV}
-            title="خروجی فایل اکسل / CSV"
-            className="p-2 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl border border-slate-300 transition"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-          </button>
+          {canExport && (
+            <button
+              onClick={exportCSV}
+              title="خروجی فایل اکسل / CSV"
+              className="p-2 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl border border-slate-300 transition cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+            </button>
+          )}
 
           {/* Add Manual Request */}
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl shadow transition"
-          >
-            <Plus className="w-4 h-4" />
-            <span>ثبت پرونده دستی</span>
-          </button>
+          {canCreate && (
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl shadow transition cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>ثبت پرونده دستی</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -664,21 +872,23 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                           <Eye className="w-4 h-4" />
                         </button>
 
-                        {/* Send Message / Notification (Bell + SMS + Push) */}
-                        <button
-                          onClick={() => openNotifyModal(req)}
-                          title="ارسال پیام و اعلان به مددجو (زنگوله / پیامک / پوش)"
-                          className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition"
-                        >
-                          <Bell className="w-4 h-4" />
-                        </button>
+                        {/* Send Message / Notification (Bell + Approved SMS + Push) */}
+                        {canSendAnyNotify && (
+                          <button
+                            onClick={() => openNotifyModal(req)}
+                            title="ارسال پیام و اعلان به مددجو (زنگوله / پیامک مجاز / پوش)"
+                            className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition cursor-pointer"
+                          >
+                            <Bell className="w-4 h-4" />
+                          </button>
+                        )}
 
                         {/* Approval (Requires permission) */}
                         {canDecide && req.status !== 'APPROVED' && (
                           <button
                             onClick={() => handleOpenApprove(req)}
                             title="تصویب و تعیین مبلغ کمک"
-                            className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition"
+                            className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
                           >
                             <CheckCircle className="w-4 h-4" />
                           </button>
@@ -687,12 +897,9 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                         {/* Needs Info */}
                         {canDecide && req.status !== 'NEEDS_INFO' && (
                           <button
-                            onClick={() => {
-                              setNeedsInfoReq(req);
-                              setNeedsInfoNote(req.note || '');
-                            }}
+                            onClick={() => openNeedsInfoModal(req)}
                             title="درخواست تکمیل مدارک"
-                            className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition"
+                            className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition cursor-pointer"
                           >
                             <AlertTriangle className="w-4 h-4" />
                           </button>
@@ -703,7 +910,7 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                           <button
                             onClick={() => handleReject(req)}
                             title="عدم تأیید / رد پرونده"
-                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition"
+                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                           >
                             <XCircle className="w-4 h-4" />
                           </button>
@@ -714,18 +921,18 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                           <button
                             onClick={() => handleResetToPending(req)}
                             title="بازنشانی به در حال بررسی"
-                            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition"
+                            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
                           >
                             <RotateCcw className="w-3.5 h-3.5" />
                           </button>
                         )}
 
                         {/* Delete */}
-                        {canDecide && (
+                        {canDelete && (
                           <button
                             onClick={() => handleDelete(req.id)}
                             title="حذف پرونده"
-                            className="p-1.5 text-rose-400 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition"
+                            className="p-1.5 text-rose-400 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -845,45 +1052,101 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
               />
             </div>
 
-            <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-200 space-y-2 text-[11px]">
-              <span className="font-bold text-blue-950 block">کانال‌های اطلاع‌رسانی این پیام به مددجو:</span>
-              <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-medium">
-                <input
-                  type="checkbox"
-                  checked={needsInfoSendInApp}
-                  onChange={(e) => setNeedsInfoSendInApp(e.target.checked)}
-                  className="rounded text-blue-600"
-                />
-                <Bell className="w-3.5 h-3.5 text-amber-600" />
-                <span>ثبت در زنگوله اعلانات پروفایل مددجو</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-medium">
-                <input
-                  type="checkbox"
-                  checked={needsInfoSendSms}
-                  onChange={(e) => setNeedsInfoSendSms(e.target.checked)}
-                  className="rounded text-blue-600"
-                />
-                <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                <span>ارسال همین متن به صورت پیامک (SMS)</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-medium">
-                <input
-                  type="checkbox"
-                  checked={needsInfoSendPush}
-                  onChange={(e) => setNeedsInfoSendPush(e.target.checked)}
-                  className="rounded text-blue-600"
-                />
-                <Smartphone className="w-3.5 h-3.5 text-indigo-600" />
-                <span>ارسال پوش نوتیفیکیشن به گوشی/مرورگر مددجو</span>
-              </label>
-            </div>
+            {canSendAnyNotify && (
+              <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-200 space-y-2 text-[11px]">
+                <span className="font-bold text-blue-950 block">کانال‌های اطلاع‌رسانی این پیام به مددجو:</span>
+                {canSendBell && (
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-medium">
+                    <input
+                      type="checkbox"
+                      checked={needsInfoSendInApp}
+                      onChange={(e) => setNeedsInfoSendInApp(e.target.checked)}
+                      className="rounded text-blue-600"
+                    />
+                    <Bell className="w-3.5 h-3.5 text-amber-600" />
+                    <span>ثبت در زنگوله اعلانات پروفایل مددجو</span>
+                  </label>
+                )}
+                {canSendPush && (
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-medium">
+                    <input
+                      type="checkbox"
+                      checked={needsInfoSendPush}
+                      onChange={(e) => setNeedsInfoSendPush(e.target.checked)}
+                      className="rounded text-blue-600"
+                    />
+                    <Smartphone className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>ارسال پوش نوتیفیکیشن به گوشی/مرورگر مددجو</span>
+                  </label>
+                )}
+                {canSendSms && (
+                  <div className="space-y-2 pt-1">
+                    <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-medium">
+                      <input
+                        type="checkbox"
+                        checked={needsInfoSendSms}
+                        onChange={(e) => setNeedsInfoSendSms(e.target.checked)}
+                        className="rounded text-emerald-600"
+                      />
+                      <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>ارسال پیامک (SMS) از میان متن‌های مجاز ثبت‌شده</span>
+                    </label>
+
+                    {needsInfoSendSms && (
+                      <div className="p-2.5 rounded-xl bg-white border border-emerald-200 space-y-2">
+                        {activeSmsTemplates.length === 0 ? (
+                          <div className="text-rose-700 text-[11px] flex items-center gap-1.5">
+                            <ShieldAlert className="w-4 h-4 shrink-0" />
+                            <span>هیچ متن پیامک مجاز فعالی ثبت نشده است (ثبت متن فقط توسط ادمین در بخش پیامک).</span>
+                          </div>
+                        ) : (
+                          <>
+                            <select
+                              value={needsInfoSmsTemplateId ?? ''}
+                              onChange={(e) =>
+                                setNeedsInfoSmsTemplateId(e.target.value ? Number(e.target.value) : null)
+                              }
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                            >
+                              {activeSmsTemplates.map((tpl) => (
+                                <option key={tpl.id} value={tpl.id}>
+                                  {tpl.title}
+                                </option>
+                              ))}
+                            </select>
+                            {selectedNeedsInfoSmsTpl && (
+                              <div className="p-2 rounded-lg bg-emerald-50/70 border border-emerald-100 text-[11px] text-emerald-950 whitespace-pre-wrap leading-relaxed">
+                                <span className="font-bold block text-[10px] text-emerald-700 mb-0.5">
+                                  پیش‌نمایش متن پیامک ارسالی (غیرقابل تغییر دستی):
+                                </span>
+                                {renderSmsTemplatePreview(selectedNeedsInfoSmsTpl.body, {
+                                  name: needsInfoReq.name,
+                                  trackingCode: needsInfoReq.trackingCode,
+                                  instName: config?.instName,
+                                  formTitle: formSchema.title,
+                                })}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {needsInfoError && (
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+                {needsInfoError}
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => setNeedsInfoReq(null)}
-                className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl"
+                className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
               >
                 انصراف
               </button>
@@ -891,7 +1154,7 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                 type="button"
                 disabled={needsInfoSubmitting}
                 onClick={handleConfirmNeedsInfo}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow transition disabled:opacity-50"
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow transition disabled:opacity-50 cursor-pointer"
               >
                 {needsInfoSubmitting ? 'در حال ثبت و ارسال...' : 'ثبت وضعیت نقص مدارک و ارسال پیام'}
               </button>
@@ -902,8 +1165,8 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
 
       {/* Direct Beneficiary Message & Notification Modal */}
       {notifyReq && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in fade-in my-auto max-h-[92vh] overflow-y-auto">
             <div className="flex items-center gap-2.5 text-amber-900 border-b border-slate-100 pb-3">
               <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
                 <Bell className="w-5 h-5" />
@@ -919,51 +1182,57 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
               </div>
             </div>
 
-            {/* Quick Presets */}
-            <div className="flex flex-wrap gap-1.5 text-[11px]">
-              {[
-                'مدارک پرونده شما ناقص است؛ لطفاً وارد پروفایل خود شده و مدارک مورد نیاز را تکمیل فرمایید.',
-                'درخواست شما توسط کارشناس بررسی شد و در نوبت کمیسیون مددکاری قرار گرفت.',
-                'لطفاً جهت تکمیل اطلاعات پرونده با واحد مددکاری مؤسسه تماس بگیرید.',
-              ].map((preset, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => setNotifyMessage(preset)}
-                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-amber-50 hover:text-amber-900 text-slate-700 border border-slate-200 transition cursor-pointer"
-                >
-                  {i === 0 ? 'الگو: نقص مدارک' : i === 1 ? 'الگو: در نوبت کمیسیون' : 'الگو: درخواست تماس'}
-                </button>
-              ))}
-            </div>
+            {(canSendBell || canSendPush) && (
+              <>
+                {/* Quick Presets for Bell / Push */}
+                <div className="flex flex-wrap gap-1.5 text-[11px]">
+                  {[
+                    'مدارک پرونده شما ناقص است؛ لطفاً وارد پروفایل خود شده و مدارک مورد نیاز را تکمیل فرمایید.',
+                    'درخواست شما توسط کارشناس بررسی شد و در نوبت کمیسیون مددکاری قرار گرفت.',
+                    'لطفاً جهت تکمیل اطلاعات پرونده با واحد مددکاری مؤسسه تماس بگیرید.',
+                  ].map((preset, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setNotifyMessage(preset)}
+                      className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-amber-50 hover:text-amber-900 text-slate-700 border border-slate-200 transition cursor-pointer"
+                    >
+                      {i === 0 ? 'الگو: نقص مدارک' : i === 1 ? 'الگو: در نوبت کمیسیون' : 'الگو: درخواست تماس'}
+                    </button>
+                  ))}
+                </div>
 
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">عنوان اعلان</label>
-                <input
-                  type="text"
-                  value={notifyTitle}
-                  onChange={(e) => setNotifyTitle(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-amber-500"
-                />
-              </div>
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">عنوان اعلان (زنگوله و پوش)</label>
+                    <input
+                      type="text"
+                      value={notifyTitle}
+                      onChange={(e) => setNotifyTitle(e.target.value)}
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
 
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  متن پیام به مددجو <span className="text-rose-500">*</span>
-                </label>
-                <textarea
-                  rows={3}
-                  value={notifyMessage}
-                  onChange={(e) => setNotifyMessage(e.target.value)}
-                  placeholder="متن پیام برای نمایش در زنگوله، ارسال پیامک یا پوش نوتیفیکیشن را بنویسید..."
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-amber-500"
-                />
-              </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      متن اعلان در زنگوله پروفایل / پوش نوتیفیکیشن
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={notifyMessage}
+                      onChange={(e) => setNotifyMessage(e.target.value)}
+                      placeholder="متن پیام برای نمایش در زنگوله پروفایل یا پوش نوتیفیکیشن را بنویسید..."
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
-              <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-2">
-                <span className="font-bold text-amber-950 block">نحوه ارسال این پیام:</span>
+            <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 space-y-2.5 text-xs">
+              <span className="font-bold text-amber-950 block">نحوه ارسال این پیام:</span>
 
+              {canSendBell && (
                 <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-semibold">
                   <input
                     type="checkbox"
@@ -974,18 +1243,9 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                   <Bell className="w-4 h-4 text-amber-600 shrink-0" />
                   <span>ثبت به عنوان اعلان در زنگوله پروفایل مددجو</span>
                 </label>
+              )}
 
-                <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-semibold">
-                  <input
-                    type="checkbox"
-                    checked={notifySendSms}
-                    onChange={(e) => setNotifySendSms(e.target.checked)}
-                    className="rounded text-emerald-600"
-                  />
-                  <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>ارسال همین متن به صورت پیامک (SMS) به شماره {notifyReq.phone}</span>
-                </label>
-
+              {canSendPush && (
                 <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-semibold">
                   <input
                     type="checkbox"
@@ -996,18 +1256,77 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
                   <Smartphone className="w-4 h-4 text-indigo-600 shrink-0" />
                   <span>ارسال پوش نوتیفیکیشن به گوشی/مرورگر مددجو</span>
                 </label>
+              )}
 
-                <div className="pt-2 mt-1 border-t border-amber-200/70">
-                  <label className="flex items-center gap-2 cursor-pointer text-slate-600 text-[11px]">
+              {canSendSms && (
+                <div className="space-y-2 pt-1">
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-800 font-semibold">
                     <input
                       type="checkbox"
-                      checked={notifyAlsoSaveNote}
-                      onChange={(e) => setNotifyAlsoSaveNote(e.target.checked)}
-                      className="rounded text-slate-600"
+                      checked={notifySendSms}
+                      onChange={(e) => setNotifySendSms(e.target.checked)}
+                      className="rounded text-emerald-600"
                     />
-                    <span>این متن در یادداشت پرونده نیز ذخیره شود</span>
+                    <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>ارسال پیامک (SMS) به {notifyReq.phone} — فقط از متن‌های مجاز ادمین</span>
                   </label>
+
+                  {notifySendSms && (
+                    <div className="p-3 rounded-xl bg-white border border-emerald-200 space-y-2">
+                      {activeSmsTemplates.length === 0 ? (
+                        <div className="text-rose-700 text-[11px] flex items-center gap-1.5">
+                          <ShieldAlert className="w-4 h-4 shrink-0" />
+                          <span>هیچ متن پیامک مجاز فعالی در سیستم ثبت نشده است. ادمین باید ابتدا در بخش «پیامک ← بانک متن‌های مجاز» متن تعریف کند.</span>
+                        </div>
+                      ) : (
+                        <>
+                          <label className="block text-[11px] font-bold text-slate-700">
+                            انتخاب متن مجاز پیامک <span className="text-rose-500">*</span>
+                          </label>
+                          <select
+                            value={notifySmsTemplateId ?? ''}
+                            onChange={(e) =>
+                              setNotifySmsTemplateId(e.target.value ? Number(e.target.value) : null)
+                            }
+                            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                          >
+                            {activeSmsTemplates.map((tpl) => (
+                              <option key={tpl.id} value={tpl.id}>
+                                {tpl.title}
+                              </option>
+                            ))}
+                          </select>
+
+                          {selectedNotifySmsTpl && (
+                            <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-100 text-[11px] text-emerald-950 whitespace-pre-wrap leading-relaxed">
+                              <span className="font-bold block text-[10px] text-emerald-700 mb-1">
+                                پیش‌نمایش پیامک ارسالی (ارسال پیامک دلخواه غیرفعال است):
+                              </span>
+                              {renderSmsTemplatePreview(selectedNotifySmsTpl.body, {
+                                name: notifyReq.name,
+                                trackingCode: notifyReq.trackingCode,
+                                instName: config?.instName,
+                                formTitle: formSchema.title,
+                              })}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
+              )}
+
+              <div className="pt-2 mt-1 border-t border-amber-200/70">
+                <label className="flex items-center gap-2 cursor-pointer text-slate-600 text-[11px]">
+                  <input
+                    type="checkbox"
+                    checked={notifyAlsoSaveNote}
+                    onChange={(e) => setNotifyAlsoSaveNote(e.target.checked)}
+                    className="rounded text-slate-600"
+                  />
+                  <span>این متن در یادداشت پرونده نیز ذخیره شود</span>
+                </label>
               </div>
             </div>
 
@@ -1471,6 +1790,8 @@ export const RequestsTab: React.FC<RequestsTabProps> = ({
             </form>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

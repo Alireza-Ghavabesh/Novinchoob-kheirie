@@ -280,5 +280,17 @@ model BeneficiaryNotification {
   @@index([phone])
 }
 
+model SmsTemplate {
+  id        Int      @id @default(autoincrement())
+  title     String
+  body      String
+  category  String   @default("GENERAL")
+  isActive  Boolean  @default(true)
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+
 
 

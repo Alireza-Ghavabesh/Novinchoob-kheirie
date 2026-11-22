@@ -15,6 +15,7 @@ import {
   SmsConfig,
   SmsRule,
   SmsLog,
+  SmsTemplate,
 } from '../types';
 import { EntityDefinition, SubmittedCustomFieldValue } from '../utils/publicFormConfig';
 
@@ -434,6 +435,30 @@ export const api = {
     const res = await authFetch(`/api/sms/rules/${id}`, { method: 'DELETE' });
     await parseJsonOrThrow(res, 'خطا در حذف شرط پیامک');
   },
+  getSmsTemplates: async (includeAll = false): Promise<SmsTemplate[]> => {
+    const res = await authFetch(`/api/sms/templates${includeAll ? '?all=true' : ''}`);
+    return parseJsonOrThrow<SmsTemplate[]>(res, 'خطا در دریافت لیست متن‌های مجاز پیامک');
+  },
+  createSmsTemplate: async (data: Partial<SmsTemplate>): Promise<SmsTemplate> => {
+    const res = await authFetch('/api/sms/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return parseJsonOrThrow<SmsTemplate>(res, 'خطا در ثبت متن مجاز پیامک');
+  },
+  updateSmsTemplate: async (id: number, data: Partial<SmsTemplate>): Promise<SmsTemplate> => {
+    const res = await authFetch(`/api/sms/templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return parseJsonOrThrow<SmsTemplate>(res, 'خطا در ویرایش متن مجاز پیامک');
+  },
+  deleteSmsTemplate: async (id: number): Promise<void> => {
+    const res = await authFetch(`/api/sms/templates/${id}`, { method: 'DELETE' });
+    await parseJsonOrThrow(res, 'خطا در حذف متن مجاز پیامک');
+  },
   getSmsLogs: async (): Promise<SmsLog[]> => {
     const res = await authFetch('/api/sms/logs');
     return parseJsonOrThrow<SmsLog[]>(res, 'خطا در دریافت گزارش پیامک‌ها');
@@ -442,11 +467,11 @@ export const api = {
     const res = await authFetch('/api/sms/logs', { method: 'DELETE' });
     await parseJsonOrThrow(res, 'خطا در پاکسازی گزارش پیامک‌ها');
   },
-  testSms: async (receptor: string, message: string): Promise<any> => {
+  testSms: async (receptor: string, smsTemplateId: number): Promise<any> => {
     const res = await authFetch('/api/sms/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ receptor, message }),
+      body: JSON.stringify({ receptor, smsTemplateId }),
     });
     const data = await parseJsonOrThrow<any>(res, 'ارسال ناموفق بود');
     if (data.success === false) {
@@ -611,6 +636,7 @@ export const api = {
       sendSms?: boolean;
       sendInApp?: boolean;
       sendDirectSms?: boolean;
+      smsTemplateId?: number | null;
       sendPush?: boolean;
     }
   ): Promise<CustomFormSubmission> => {
@@ -624,6 +650,7 @@ export const api = {
   sendBeneficiaryNotification: async (data: {
     requestId?: number;
     beneficiaryId?: string | null;
+    beneficiaryName?: string | null;
     phone?: string | null;
     title?: string;
     message: string;
@@ -632,6 +659,7 @@ export const api = {
     trackingCode?: string | null;
     sendInApp?: boolean;
     sendSms?: boolean;
+    smsTemplateId?: number | null;
     sendPush?: boolean;
     alsoSaveNote?: boolean;
     nextRequestStatus?: string;

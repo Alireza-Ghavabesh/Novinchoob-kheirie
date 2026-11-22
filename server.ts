@@ -205,8 +205,20 @@ async function ensureDatabaseSchema(): Promise<void> {
       await prisma.$executeRawUnsafe(
         `CREATE INDEX IF NOT EXISTS "BeneficiaryNotification_phone_idx" ON "BeneficiaryNotification"("phone")`
       );
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "SmsTemplate" (
+          "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+          "title" TEXT NOT NULL,
+          "body" TEXT NOT NULL,
+          "category" TEXT NOT NULL DEFAULT 'GENERAL',
+          "isActive" BOOLEAN NOT NULL DEFAULT true,
+          "createdBy" TEXT,
+          "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
     } catch (err) {
-      console.error('[DB Auto-Migrate] Failed ensuring BeneficiaryNotification table:', err);
+      console.error('[DB Auto-Migrate] Failed ensuring BeneficiaryNotification/SmsTemplate tables:', err);
     }
 
     const tableColsCache = new Map<string, Set<string>>();
@@ -302,6 +314,42 @@ async function ensureInitialBootstrap(): Promise<void> {
       for (const name of defaults) {
         await prisma.programCategory.upsert({ where: { name }, update: {}, create: { name } });
       }
+    }
+
+    const smsTemplateCount = await prisma.smsTemplate.count();
+    if (smsTemplateCount === 0) {
+      await prisma.smsTemplate.createMany({
+        data: [
+          {
+            title: 'درخواست تکمیل مدارک پرونده',
+            category: 'NEEDS_INFO',
+            body: 'سلام {name} عزیز، پرونده شما ({formTitle}) با کد رهگیری {trackingCode} نیازمند تکمیل مدارک می‌باشد. لطفاً به پروفایل مددجویی خود مراجعه فرمایید. {instName}',
+            isActive: true,
+            createdBy: 'admin',
+          },
+          {
+            title: 'ثبت پیام جدید کارشناس در پروفایل',
+            category: 'EXPERT_MESSAGE',
+            body: 'سلام {name} گرامی، پیام جدیدی از سوی کارشناس مددکاری برای پرونده {trackingCode} در پروفایل شما ثبت شد. لطفاً وارد سامانه شوید. {instName}',
+            isActive: true,
+            createdBy: 'admin',
+          },
+          {
+            title: 'تأیید و تصویب پرونده مددجویی',
+            category: 'APPROVED',
+            body: 'سلام {name} گرامی، درخواست شما ({formTitle}) با کد رهگیری {trackingCode} در {instName} تأیید گردید. جزئیات در پروفایل شما قابل مشاهده است.',
+            isActive: true,
+            createdBy: 'admin',
+          },
+          {
+            title: 'دعوت به تماس یا مراجعه به واحد مددکاری',
+            category: 'FOLLOWUP',
+            body: 'سلام {name} عزیز، جهت بررسی تکمیلی پرونده {trackingCode} لطفاً با واحد مددکاری {instName} تماس حاصل فرمایید.',
+            isActive: true,
+            createdBy: 'admin',
+          },
+        ],
+      });
     }
   } catch (err) {
     console.error('[DB Bootstrap] Non-fatal bootstrap error:', err);
@@ -469,6 +517,43 @@ async function requireAuth(req: AuthenticatedRequest, res: express.Response, nex
   }
 }
 
+function userHasPerm(user: any, key: string): boolean {
+  if (!user) return false;
+  if (user.username === 'admin') return true;
+  const perms = (user.perms || {}) as Record<string, any>;
+
+  // Strictly restricted to main admin or explicit grant
+  if (key === 'manageSmsTemplates') {
+    return perms.manageSmsTemplates === true;
+  }
+
+  if (typeof perms[key] === 'boolean') {
+    return Boolean(perms[key]);
+  }
+
+  // Backwards-compatible fallbacks ONLY when the granular key is undefined
+  switch (key) {
+    case 'createRequest':
+    case 'exportInbox':
+      return Boolean(perms.viewInbox || perms.decideInbox);
+    case 'deleteInbox':
+      return Boolean(perms.decideInbox);
+    case 'sendBeneficiaryBell':
+    case 'sendBeneficiarySms':
+    case 'sendBeneficiaryPush':
+      return Boolean(perms.decideInbox || perms.viewInbox);
+    case 'viewForms':
+    case 'manageForms':
+    case 'manageUsers':
+    case 'manageSms':
+      return Boolean(perms.manageSettings);
+    case 'viewCalendar':
+      return true;
+    default:
+      return false;
+  }
+}
+
 function requirePerm(...permKeys: string[]) {
   return (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
     const user = req.authUser;
@@ -478,8 +563,7 @@ function requirePerm(...permKeys: string[]) {
     if (user.username === 'admin') {
       return next();
     }
-    const perms = (user.perms || {}) as Record<string, any>;
-    const hasAccess = permKeys.some((key) => Boolean(perms[key]));
+    const hasAccess = permKeys.some((key) => userHasPerm(user, key));
     if (!hasAccess) {
       return res.status(403).json({ error: 'شما مجوز دسترسی به این بخش یا عملیات را ندارید.' });
     }
@@ -777,8 +861,16 @@ app.get('/api/auth/check-admin-route', async (req, res) => {
   }
 });
 
-app.put('/api/config', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.put('/api/config', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
+    const bodyKeys = Object.keys(req.body || {}).filter((k) => req.body[k] !== undefined);
+    const isPublicFormOnly = bodyKeys.length > 0 && bodyKeys.every((k) => k === 'publicFormConfig');
+    if (
+      !userHasPerm(req.authUser, 'manageSettings') &&
+      !(isPublicFormOnly && userHasPerm(req.authUser, 'manageForms'))
+    ) {
+      return res.status(403).json({ error: 'شما مجوز ویرایش تنظیمات سامانه را ندارید.' });
+    }
     const allowedFields = [
       'instName',
       'automationTitle',
@@ -1314,7 +1406,7 @@ app.patch('/api/auth/password-resets/:id', requireAuth, requirePerm('manageSetti
   }
 });
 
-app.get('/api/users', requireAuth, requirePerm('manageSettings'), async (_req, res) => {
+app.get('/api/users', requireAuth, requirePerm('manageUsers', 'manageSms', 'manageSettings'), async (_req, res) => {
   try {
     const users = await prisma.user.findMany({
       orderBy: { createdAt: 'asc' },
@@ -1339,7 +1431,7 @@ app.get('/api/users', requireAuth, requirePerm('manageSettings'), async (_req, r
   }
 });
 
-app.post('/api/users', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.post('/api/users', requireAuth, requirePerm('manageUsers'), async (req: AuthenticatedRequest, res) => {
   try {
     const { username, password, name, phone, role, perms } = req.body;
     if (!username || !password || !name) {
@@ -1358,6 +1450,11 @@ app.post('/api/users', requireAuth, requirePerm('manageSettings'), async (req, r
       }
     }
 
+    const sanitizedPerms: Record<string, boolean> = { ...(perms || {}) };
+    if (!userHasPerm(req.authUser, 'manageSmsTemplates')) {
+      sanitizedPerms.manageSmsTemplates = false;
+    }
+
     const user = await prisma.user.create({
       data: {
         username: String(username).trim(),
@@ -1365,7 +1462,7 @@ app.post('/api/users', requireAuth, requirePerm('manageSettings'), async (req, r
         name: String(name).trim(),
         phone: cleanPhone,
         role: role || 'کارشناس',
-        perms: JSON.stringify(perms || {}),
+        perms: JSON.stringify(sanitizedPerms),
       },
     });
     res.json({
@@ -1374,7 +1471,7 @@ app.post('/api/users', requireAuth, requirePerm('manageSettings'), async (req, r
       name: user.name,
       phone: user.phone,
       role: user.role,
-      perms: perms || {},
+      perms: sanitizedPerms,
       isActive: user.isActive,
     });
   } catch (error) {
@@ -1382,7 +1479,7 @@ app.post('/api/users', requireAuth, requirePerm('manageSettings'), async (req, r
   }
 });
 
-app.put('/api/users/:id', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.put('/api/users/:id', requireAuth, requirePerm('manageUsers'), async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
     const targetUser = await prisma.user.findUnique({ where: { id } });
@@ -1399,7 +1496,14 @@ app.put('/api/users/:id', requireAuth, requirePerm('manageSettings'), async (req
     if (password && String(password).trim()) {
       updateData.password = hashPassword(String(password));
     }
-    if (perms !== undefined) updateData.perms = JSON.stringify(perms);
+    if (perms !== undefined) {
+      const existingPerms = JSON.parse(targetUser.perms || '{}');
+      const nextPerms: Record<string, boolean> = { ...(perms || {}) };
+      if (!userHasPerm(req.authUser, 'manageSmsTemplates')) {
+        nextPerms.manageSmsTemplates = Boolean(existingPerms.manageSmsTemplates === true);
+      }
+      updateData.perms = JSON.stringify(nextPerms);
+    }
     if (isActive !== undefined) updateData.isActive = targetUser.username === 'admin' ? true : Boolean(isActive);
 
     if (phone !== undefined) {
@@ -1436,7 +1540,7 @@ app.put('/api/users/:id', requireAuth, requirePerm('manageSettings'), async (req
   }
 });
 
-app.delete('/api/users/:id', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.delete('/api/users/:id', requireAuth, requirePerm('manageUsers'), async (req, res) => {
   try {
     const { id } = req.params;
     const user = await prisma.user.findUnique({ where: { id } });
@@ -1635,7 +1739,7 @@ app.put('/api/requests/:id', requireAuth, requirePerm('decideInbox'), async (req
   }
 });
 
-app.delete('/api/requests/:id', requireAuth, requirePerm('decideInbox'), async (req, res) => {
+app.delete('/api/requests/:id', requireAuth, requirePerm('deleteInbox'), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await prisma.beneficiaryRequest.delete({ where: { id } });
@@ -2026,7 +2130,7 @@ app.post('/api/restore', requireAuth, requirePerm('manageSettings'), async (req,
 // --- SMS Module Endpoints (Ghasedak) ---
 
 // 1. Get / Update SMS Config
-app.get('/api/sms/config', requireAuth, requirePerm('manageSettings'), async (_req, res) => {
+app.get('/api/sms/config', requireAuth, requirePerm('manageSms', 'manageSmsTemplates'), async (_req, res) => {
   const fetchOrCreate = async () => {
     let conf = await prisma.smsConfig.findUnique({ where: { id: 1 } });
     if (!conf) {
@@ -2063,7 +2167,7 @@ app.get('/api/sms/config', requireAuth, requirePerm('manageSettings'), async (_r
   }
 });
 
-app.put('/api/sms/config', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.put('/api/sms/config', requireAuth, requirePerm('manageSms'), async (req, res) => {
   try {
     const { apiKey, senderLine, provider, loginOtpTemplate, loginOtpMessage, isEnabled } = req.body || {};
     const cleanKey = apiKey !== undefined ? String(apiKey).trim() : undefined;
@@ -2142,7 +2246,7 @@ app.put('/api/sms/config', requireAuth, requirePerm('manageSettings'), async (re
 });
 
 // 2. Rules CRUD
-app.get('/api/sms/rules', requireAuth, requirePerm('manageSettings'), async (_req, res) => {
+app.get('/api/sms/rules', requireAuth, requirePerm('manageSms', 'manageSmsTemplates'), async (_req, res) => {
   try {
     const count = await prisma.smsRule.count();
     if (count === 0) {
@@ -2199,7 +2303,7 @@ app.get('/api/sms/rules', requireAuth, requirePerm('manageSettings'), async (_re
   }
 });
 
-app.post('/api/sms/rules', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.post('/api/sms/rules', requireAuth, requirePerm('manageSms'), async (req, res) => {
   try {
     const {
       title,
@@ -2250,7 +2354,7 @@ app.post('/api/sms/rules', requireAuth, requirePerm('manageSettings'), async (re
   }
 });
 
-app.put('/api/sms/rules/:id', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.put('/api/sms/rules/:id', requireAuth, requirePerm('manageSms'), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const {
@@ -2302,7 +2406,7 @@ app.put('/api/sms/rules/:id', requireAuth, requirePerm('manageSettings'), async 
   }
 });
 
-app.delete('/api/sms/rules/:id', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.delete('/api/sms/rules/:id', requireAuth, requirePerm('manageSms'), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await prisma.smsRule.delete({ where: { id } });
@@ -2312,8 +2416,81 @@ app.delete('/api/sms/rules/:id', requireAuth, requirePerm('manageSettings'), asy
   }
 });
 
+// 2.5 Approved SMS Templates Bank (Strictly Admin / manageSmsTemplates for write; auth users can read active templates)
+app.get('/api/sms/templates', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const includeInactive =
+      req.query.all === 'true' &&
+      (userHasPerm(req.authUser, 'manageSmsTemplates') || userHasPerm(req.authUser, 'manageSms'));
+    const templates = await prisma.smsTemplate.findMany({
+      where: includeInactive ? undefined : { isActive: true },
+      orderBy: { id: 'asc' },
+    });
+    res.json(templates);
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در دریافت لیست متن‌های مجاز پیامک', details: String(error) });
+  }
+});
+
+app.post('/api/sms/templates', requireAuth, requirePerm('manageSmsTemplates'), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { title, body, category, isActive } = req.body || {};
+    if (!title || !String(title).trim() || !body || !String(body).trim()) {
+      return res.status(400).json({ error: 'عنوان و متن پیامک الزامی است.' });
+    }
+    const created = await prisma.smsTemplate.create({
+      data: {
+        title: String(title).trim(),
+        body: String(body).trim(),
+        category: String(category || 'GENERAL').trim(),
+        isActive: isActive !== false,
+        createdBy: req.authUser?.username || 'admin',
+      },
+    });
+    res.json(created);
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در ثبت متن مجاز پیامک', details: String(error) });
+  }
+});
+
+app.put('/api/sms/templates/:id', requireAuth, requirePerm('manageSmsTemplates'), async (req: AuthenticatedRequest, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { title, body, category, isActive } = req.body || {};
+    const data: any = {};
+    if (title !== undefined) {
+      if (!String(title).trim()) return res.status(400).json({ error: 'عنوان قالب نمی‌تواند خالی باشد.' });
+      data.title = String(title).trim();
+    }
+    if (body !== undefined) {
+      if (!String(body).trim()) return res.status(400).json({ error: 'متن پیامک نمی‌تواند خالی باشد.' });
+      data.body = String(body).trim();
+    }
+    if (category !== undefined) data.category = String(category).trim() || 'GENERAL';
+    if (isActive !== undefined) data.isActive = Boolean(isActive);
+
+    const updated = await prisma.smsTemplate.update({
+      where: { id },
+      data,
+    });
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در ویرایش متن مجاز پیامک', details: String(error) });
+  }
+});
+
+app.delete('/api/sms/templates/:id', requireAuth, requirePerm('manageSmsTemplates'), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    await prisma.smsTemplate.delete({ where: { id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در حذف متن مجاز پیامک', details: String(error) });
+  }
+});
+
 // 3. SMS Logs
-app.get('/api/sms/logs', requireAuth, requirePerm('manageSettings'), async (_req, res) => {
+app.get('/api/sms/logs', requireAuth, requirePerm('manageSms', 'manageSmsTemplates'), async (_req, res) => {
   try {
     const logs = await prisma.smsLog.findMany({
       orderBy: { id: 'desc' },
@@ -2325,7 +2502,7 @@ app.get('/api/sms/logs', requireAuth, requirePerm('manageSettings'), async (_req
   }
 });
 
-app.delete('/api/sms/logs', requireAuth, requirePerm('manageSettings'), async (_req, res) => {
+app.delete('/api/sms/logs', requireAuth, requirePerm('manageSms'), async (_req, res) => {
   try {
     await prisma.smsLog.deleteMany({});
     res.json({ success: true });
@@ -2334,15 +2511,33 @@ app.delete('/api/sms/logs', requireAuth, requirePerm('manageSettings'), async (_
   }
 });
 
-// 4. Test Manual SMS Sending
-app.post('/api/sms/test', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+// 4. Test Manual SMS Sending (Template-only unless user has manageSmsTemplates)
+app.post('/api/sms/test', requireAuth, requirePerm('manageSms', 'manageSmsTemplates'), async (req: AuthenticatedRequest, res) => {
   try {
-    const { receptor, message } = req.body;
-    if (!receptor || !message) {
-      return res.status(400).json({ error: 'شماره گیرنده و متن پیام الزامی است.' });
+    const { receptor, message, smsTemplateId } = req.body || {};
+    if (!receptor) {
+      return res.status(400).json({ error: 'شماره گیرنده الزامی است.' });
     }
 
-    const finalMessage = appendSmsCancellationFooter(String(message));
+    let rawMsg = '';
+    if (smsTemplateId) {
+      const tpl = await prisma.smsTemplate.findUnique({ where: { id: Number(smsTemplateId) } });
+      if (!tpl || !tpl.isActive) {
+        return res.status(400).json({ error: 'قالب پیامک انتخاب‌شده یافت نشد یا غیرفعال است.' });
+      }
+      const appCfg = await prisma.appConfig.findUnique({ where: { id: 1 } });
+      rawMsg = tpl.body
+        .replace(/\{name\}/g, 'کاربر آزمایشی')
+        .replace(/\{trackingCode\}/g, 'TEST-1405')
+        .replace(/\{formTitle\}/g, 'فرم نمونه')
+        .replace(/\{instName\}/g, appCfg?.instName || 'مؤسسه خیریه');
+    } else {
+      return res.status(400).json({
+        error: 'ارسال پیامک با متن دلخواه مجاز نیست؛ لطفاً یکی از متن‌های مجاز ثبت‌شده در بانک پیامک را انتخاب کنید.',
+      });
+    }
+
+    const finalMessage = appendSmsCancellationFooter(rawMsg);
     const conf = await prisma.smsConfig.findUnique({ where: { id: 1 } });
     let result: any;
     if (!conf?.apiKey || conf.apiKey.trim() === '') {
@@ -2356,7 +2551,7 @@ app.post('/api/sms/test', requireAuth, requirePerm('manageSettings'), async (req
 
     await prisma.smsLog.create({
       data: {
-        ruleTitle: 'ارسال آزمایشی دستی',
+        ruleTitle: 'ارسال آزمایشی با قالب مجاز',
         eventType: 'MANUAL_TEST',
         receptor,
         message: finalMessage,
@@ -2373,7 +2568,7 @@ app.post('/api/sms/test', requireAuth, requirePerm('manageSettings'), async (req
 });
 
 // 4.5 Test Real OTP SMS Sending (using token + senderLine + optional template)
-app.post('/api/sms/test-otp', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.post('/api/sms/test-otp', requireAuth, requirePerm('manageSms'), async (req, res) => {
   try {
     const cleanPhone = normalizeIranMobile(String(req.body?.phone || ''));
     if (!isValidIranMobile(cleanPhone)) {
@@ -2877,7 +3072,7 @@ app.get('/api/entities', async (_req, res) => {
   }
 });
 
-app.post('/api/entities', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.post('/api/entities', requireAuth, requirePerm('manageForms'), async (req, res) => {
   try {
     const { name, singularLabel, description, fields, catalogItems } = req.body;
     if (!name || !String(name).trim()) {
@@ -2902,7 +3097,7 @@ app.post('/api/entities', requireAuth, requirePerm('manageSettings'), async (req
   }
 });
 
-app.put('/api/entities/:id', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.put('/api/entities/:id', requireAuth, requirePerm('manageForms'), async (req, res) => {
   try {
     const { id } = req.params;
     const { name, singularLabel, description, fields, catalogItems } = req.body;
@@ -2928,7 +3123,7 @@ app.put('/api/entities/:id', requireAuth, requirePerm('manageSettings'), async (
   }
 });
 
-app.delete('/api/entities/:id', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.delete('/api/entities/:id', requireAuth, requirePerm('manageForms'), async (req, res) => {
   try {
     await prisma.entityDefinition.delete({ where: { id: req.params.id } });
     res.json({ success: true });
@@ -2938,7 +3133,7 @@ app.delete('/api/entities/:id', requireAuth, requirePerm('manageSettings'), asyn
 });
 
 // Custom Forms CRUD & Public Submission
-app.get('/api/forms', requireAuth, requirePerm('manageSettings'), async (_req, res) => {
+app.get('/api/forms', requireAuth, requirePerm('viewForms', 'manageForms', 'viewInbox', 'decideInbox'), async (_req, res) => {
   try {
     const forms = await prisma.customForm.findMany({
       orderBy: { createdAt: 'desc' },
@@ -2966,7 +3161,7 @@ app.get('/api/forms/public/:slug', async (req, res) => {
   }
 });
 
-app.post('/api/forms', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.post('/api/forms', requireAuth, requirePerm('manageForms'), async (req, res) => {
   try {
     const {
       title,
@@ -3024,7 +3219,7 @@ app.post('/api/forms', requireAuth, requirePerm('manageSettings'), async (req, r
   }
 });
 
-app.put('/api/forms/:id', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.put('/api/forms/:id', requireAuth, requirePerm('manageForms'), async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -3085,7 +3280,7 @@ app.put('/api/forms/:id', requireAuth, requirePerm('manageSettings'), async (req
   }
 });
 
-app.delete('/api/forms/:id', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.delete('/api/forms/:id', requireAuth, requirePerm('manageForms'), async (req, res) => {
   try {
     await prisma.customForm.delete({ where: { id: req.params.id } });
     res.json({ success: true });
@@ -3176,7 +3371,7 @@ app.get('/api/forms/public/:slug/track/:code', async (req, res) => {
 app.get(
   '/api/forms/:id/submissions',
   requireAuth,
-  requirePerm('manageSettings', 'viewInbox', 'decideInbox'),
+  requirePerm('viewForms', 'manageForms', 'viewInbox', 'decideInbox'),
   async (req, res) => {
     try {
       const subs = await prisma.customFormSubmission.findMany({
@@ -3191,9 +3386,49 @@ app.get(
   }
 );
 
+function renderApprovedSmsTemplate(
+  body: string,
+  vars: { name?: string | null; trackingCode?: string | null; formTitle?: string | null; instName?: string | null }
+): string {
+  return String(body || '')
+    .replace(/\{name\}/g, vars.name?.trim() || 'مددجوی گرامی')
+    .replace(/\{trackingCode\}/g, vars.trackingCode?.trim() || '---')
+    .replace(/\{formTitle\}/g, vars.formTitle?.trim() || 'فرم پرونده')
+    .replace(/\{instName\}/g, vars.instName?.trim() || 'مؤسسه خیریه');
+}
+
+async function resolveApprovedSmsText(
+  smsTemplateId: any,
+  vars: { name?: string | null; trackingCode?: string | null; formTitle?: string | null }
+): Promise<{ error?: string; text?: string; templateTitle?: string }> {
+  const numericId = Number(smsTemplateId);
+  if (!numericId || Number.isNaN(numericId)) {
+    return {
+      error:
+        'ارسال پیامک با متن دلخواه مجاز نیست؛ لطفاً یکی از متن‌های مجاز ثبت‌شده توسط ادمین را انتخاب کنید.',
+    };
+  }
+  const tpl = await prisma.smsTemplate.findUnique({ where: { id: numericId } });
+  if (!tpl || !tpl.isActive) {
+    return {
+      error: 'متن پیامک انتخاب‌شده در بانک متن‌های مجاز یافت نشد یا توسط ادمین غیرفعال شده است.',
+    };
+  }
+  const appCfg = await prisma.appConfig.findUnique({ where: { id: 1 } });
+  const rendered = renderApprovedSmsTemplate(tpl.body, {
+    ...vars,
+    instName: appCfg?.instName || 'مؤسسه خیریه',
+  });
+  return {
+    text: appendSmsCancellationFooter(rendered),
+    templateTitle: tpl.title,
+  };
+}
+
 async function dispatchBeneficiaryNotification(params: {
   beneficiaryId?: string | null;
   phone?: string | null;
+  beneficiaryName?: string | null;
   title: string;
   message: string;
   type?: string;
@@ -3203,21 +3438,29 @@ async function dispatchBeneficiaryNotification(params: {
   senderName?: string | null;
   sendInApp?: boolean;
   sendSms?: boolean;
+  smsTemplateId?: number | null;
+  resolvedSmsText?: string | null;
+  resolvedSmsTemplateTitle?: string | null;
   sendPush?: boolean;
 }) {
   const cleanMsg = String(params.message || '').trim();
   const cleanTitle = String(params.title || 'پیام جدید از واحد مددکاری').trim();
   let resolvedBeneficiaryId: string | null = params.beneficiaryId || null;
   let resolvedPhone: string | null = normalizeIranMobile(String(params.phone || '')) || null;
+  let resolvedName: string | null = params.beneficiaryName || null;
 
   if (!resolvedPhone && resolvedBeneficiaryId) {
     const acc = await prisma.beneficiaryAccount.findUnique({ where: { id: resolvedBeneficiaryId } });
     if (acc?.phone) resolvedPhone = normalizeIranMobile(acc.phone) || acc.phone;
+    if (acc?.fullName && !resolvedName) resolvedName = acc.fullName;
   } else if (!resolvedBeneficiaryId && resolvedPhone) {
     const acc = await prisma.beneficiaryAccount.findFirst({
       where: { OR: [{ phone: resolvedPhone }, { phone: String(params.phone || '').trim() }] },
     });
-    if (acc) resolvedBeneficiaryId = acc.id;
+    if (acc) {
+      resolvedBeneficiaryId = acc.id;
+      if (!resolvedName && acc.fullName) resolvedName = acc.fullName;
+    }
   }
 
   const smsResult: { attempted: boolean; sent: boolean; receptor?: string; error?: string } = {
@@ -3226,42 +3469,63 @@ async function dispatchBeneficiaryNotification(params: {
     receptor: resolvedPhone || undefined,
   };
 
-  if (params.sendSms) {
-    if (!resolvedPhone) {
-      smsResult.error = 'شماره موبایل معتبری برای این مددجو یافت نشد.';
-    } else {
-      const smsCfg = await prisma.smsConfig.findUnique({ where: { id: 1 } });
-      if (!smsCfg || !smsCfg.isEnabled) {
-        smsResult.error = 'سرویس پیامک در تنظیمات غیرفعال است.';
-      } else if (!smsCfg.apiKey || smsCfg.apiKey === 'DEMO_KEY') {
-        smsResult.error = 'توکن پنل پیامک (قاصدک) تنظیم نشده است.';
-      } else {
-        const res = await smsService.sendGhasedak(
-          smsCfg.apiKey,
-          smsCfg.senderLine,
-          resolvedPhone,
-          cleanMsg
-        );
-        smsResult.sent = res.success;
-        if (!res.success) smsResult.error = res.error || 'خطا در ارسال پیامک';
+  let smsTextToSend = params.resolvedSmsText || null;
+  let smsTplTitle = params.resolvedSmsTemplateTitle || cleanTitle;
 
-        await prisma.smsLog
-          .create({
-            data: {
-              ruleTitle: cleanTitle,
-              eventType: 'EXPERT_DIRECT_MESSAGE',
-              receptor: resolvedPhone,
-              message: cleanMsg,
-              status: res.success ? 'SUCCESS' : 'FAILED',
-              providerMsgId: res.messageId || null,
-              cost: res.cost ?? null,
-              errorDetails: res.error || null,
-            },
-          })
-          .catch(() => undefined);
+  if (params.sendSms) {
+    if (!smsTextToSend) {
+      const resolved = await resolveApprovedSmsText(params.smsTemplateId, {
+        name: resolvedName,
+        trackingCode: params.trackingCode,
+        formTitle: params.formTitle,
+      });
+      if (resolved.error || !resolved.text) {
+        smsResult.error = resolved.error || 'متن پیامک مجاز انتخاب نشده است.';
+      } else {
+        smsTextToSend = resolved.text;
+        smsTplTitle = resolved.templateTitle || cleanTitle;
+      }
+    }
+
+    if (!smsResult.error) {
+      if (!resolvedPhone) {
+        smsResult.error = 'شماره موبایل معتبری برای این مددجو یافت نشد.';
+      } else {
+        const smsCfg = await prisma.smsConfig.findUnique({ where: { id: 1 } });
+        if (!smsCfg || !smsCfg.isEnabled) {
+          smsResult.error = 'سرویس پیامک در تنظیمات غیرفعال است.';
+        } else if (!smsCfg.apiKey || smsCfg.apiKey === 'DEMO_KEY') {
+          smsResult.error = 'توکن پنل پیامک (قاصدک) تنظیم نشده است.';
+        } else {
+          const res = await smsService.sendGhasedak(
+            smsCfg.apiKey,
+            smsCfg.senderLine,
+            resolvedPhone,
+            smsTextToSend!
+          );
+          smsResult.sent = res.success;
+          if (!res.success) smsResult.error = res.error || 'خطا در ارسال پیامک';
+
+          await prisma.smsLog
+            .create({
+              data: {
+                ruleTitle: `قالب مجاز: ${smsTplTitle}`,
+                eventType: 'EXPERT_DIRECT_MESSAGE',
+                receptor: resolvedPhone,
+                message: smsTextToSend!,
+                status: res.success ? 'SUCCESS' : 'FAILED',
+                providerMsgId: res.messageId || null,
+                cost: res.cost ?? null,
+                errorDetails: res.error || null,
+              },
+            })
+            .catch(() => undefined);
+        }
       }
     }
   }
+
+  const effectiveInAppPushMsg = cleanMsg || (smsTextToSend ? smsTextToSend.replace(/\nلغو 11\s*$/, '').trim() : '');
 
   const pushResult: { attempted: boolean; sentCount: number; failedCount: number; error?: string } = {
     attempted: Boolean(params.sendPush),
@@ -3277,7 +3541,7 @@ async function dispatchBeneficiaryNotification(params: {
       const portalUrl = `/${appCfg?.beneficiaryLoginSlug || 'beneficiary'}`;
       const res = await pushService.sendBeneficiaryNotification({
         title: cleanTitle,
-        body: cleanMsg,
+        body: effectiveInAppPushMsg || cleanTitle,
         url: portalUrl,
         beneficiaryId: resolvedBeneficiaryId,
         phone: resolvedPhone,
@@ -3295,13 +3559,13 @@ async function dispatchBeneficiaryNotification(params: {
     created: false,
   };
 
-  if (params.sendInApp !== false && cleanMsg) {
+  if (params.sendInApp !== false && effectiveInAppPushMsg) {
     const createdNotif = await prisma.beneficiaryNotification.create({
       data: {
         beneficiaryId: resolvedBeneficiaryId,
         phone: resolvedPhone,
         title: cleanTitle,
-        message: cleanMsg,
+        message: effectiveInAppPushMsg,
         type: params.type || 'EXPERT_MESSAGE',
         formId: params.formId || null,
         formTitle: params.formTitle || null,
@@ -3326,12 +3590,13 @@ async function dispatchBeneficiaryNotification(params: {
 app.post(
   '/api/admin/beneficiary-notify',
   requireAuth,
-  requirePerm('viewInbox', 'decideInbox', 'manageSettings'),
+  requirePerm('sendBeneficiaryBell', 'sendBeneficiarySms', 'sendBeneficiaryPush', 'decideInbox', 'viewInbox'),
   async (req: AuthenticatedRequest, res) => {
     try {
       const {
         requestId,
         beneficiaryId,
+        beneficiaryName,
         phone,
         title,
         message,
@@ -3340,18 +3605,34 @@ app.post(
         trackingCode,
         sendInApp = true,
         sendSms = false,
+        smsTemplateId,
         sendPush = false,
         alsoSaveNote = false,
         nextRequestStatus,
       } = req.body || {};
 
+      // Enforce granular channel permissions
+      if (sendInApp && !userHasPerm(req.authUser, 'sendBeneficiaryBell')) {
+        return res.status(403).json({ error: 'شما مجوز ارسال اعلان در زنگوله پروفایل مددجو را ندارید.' });
+      }
+      if (sendSms && !userHasPerm(req.authUser, 'sendBeneficiarySms')) {
+        return res.status(403).json({ error: 'شما مجوز ارسال پیامک به مددجو را ندارید.' });
+      }
+      if (sendPush && !userHasPerm(req.authUser, 'sendBeneficiaryPush')) {
+        return res.status(403).json({ error: 'شما مجوز ارسال پوش نوتیفیکیشن به مددجو را ندارید.' });
+      }
+      if ((alsoSaveNote || nextRequestStatus) && !userHasPerm(req.authUser, 'decideInbox')) {
+        return res.status(403).json({ error: 'شما مجوز تغییر وضعیت پرونده متقاضی را ندارید.' });
+      }
+
       const cleanMsg = String(message || '').trim();
-      if (!cleanMsg) {
+      if (!cleanMsg && !sendSms) {
         return res.status(400).json({ error: 'متن پیام نمی‌تواند خالی باشد.' });
       }
 
       let resolvedBeneficiaryId: string | null = beneficiaryId || null;
       let resolvedPhone: string | null = phone || null;
+      let resolvedName: string | null = beneficiaryName || null;
       let resolvedTrackingCode: string | null = trackingCode || null;
       let resolvedFormId: string | null = formId || null;
       let resolvedFormTitle: string | null = formTitle || null;
@@ -3363,13 +3644,14 @@ app.post(
         if (reqRecord) {
           resolvedBeneficiaryId = resolvedBeneficiaryId || reqRecord.beneficiaryId || null;
           resolvedPhone = resolvedPhone || reqRecord.phone || null;
+          resolvedName = resolvedName || reqRecord.name || null;
           resolvedTrackingCode = resolvedTrackingCode || reqRecord.trackingCode;
           resolvedFormId = resolvedFormId || 'PUBLIC_REQUEST';
           resolvedFormTitle = resolvedFormTitle || 'فرم درخواست عمومی';
 
           if (alsoSaveNote || nextRequestStatus) {
             const updateData: any = {};
-            if (alsoSaveNote) updateData.note = cleanMsg;
+            if (alsoSaveNote && cleanMsg) updateData.note = cleanMsg;
             if (nextRequestStatus) updateData.status = String(nextRequestStatus);
             await prisma.beneficiaryRequest.update({
               where: { id: reqRecord.id },
@@ -3379,10 +3661,27 @@ app.post(
         }
       }
 
+      // Strictly enforce approved SMS templates before dispatching
+      let resolvedSmsText: string | null = null;
+      let resolvedSmsTemplateTitle: string | null = null;
+      if (sendSms) {
+        const tplRes = await resolveApprovedSmsText(smsTemplateId, {
+          name: resolvedName,
+          trackingCode: resolvedTrackingCode,
+          formTitle: resolvedFormTitle,
+        });
+        if (tplRes.error || !tplRes.text) {
+          return res.status(400).json({ error: tplRes.error || 'قالب پیامک مجاز انتخاب نشده است.' });
+        }
+        resolvedSmsText = tplRes.text;
+        resolvedSmsTemplateTitle = tplRes.templateTitle || null;
+      }
+
       const senderName = req.authUser?.name || req.authUser?.username || 'کارشناس';
       const result = await dispatchBeneficiaryNotification({
         beneficiaryId: resolvedBeneficiaryId,
         phone: resolvedPhone,
+        beneficiaryName: resolvedName,
         title:
           String(title || '').trim() ||
           (resolvedFormTitle ? `پیام کارشناس درباره ${resolvedFormTitle}` : 'پیام جدید از واحد مددکاری'),
@@ -3394,6 +3693,9 @@ app.post(
         senderName,
         sendInApp: Boolean(sendInApp),
         sendSms: Boolean(sendSms),
+        smsTemplateId: smsTemplateId ? Number(smsTemplateId) : null,
+        resolvedSmsText,
+        resolvedSmsTemplateTitle,
         sendPush: Boolean(sendPush),
       });
 
@@ -3407,11 +3709,34 @@ app.post(
 app.patch(
   '/api/forms/submissions/:submissionId',
   requireAuth,
-  requirePerm('manageSettings', 'viewInbox', 'decideInbox'),
+  requirePerm('manageForms', 'decideInbox', 'viewInbox'),
   async (req: AuthenticatedRequest, res) => {
     try {
       const id = parseInt(req.params.submissionId);
-      const { status, note, expertMessage, sendSms, sendInApp, sendDirectSms, sendPush } = req.body;
+      const {
+        status,
+        note,
+        expertMessage,
+        sendSms,
+        sendInApp,
+        sendDirectSms,
+        smsTemplateId,
+        sendPush,
+      } = req.body;
+
+      // Enforce granular permissions for status change and channels
+      if (status && !userHasPerm(req.authUser, 'decideInbox') && !userHasPerm(req.authUser, 'manageForms')) {
+        return res.status(403).json({ error: 'شما مجوز تغییر وضعیت پرونده را ندارید.' });
+      }
+      if (sendInApp === true && !userHasPerm(req.authUser, 'sendBeneficiaryBell')) {
+        return res.status(403).json({ error: 'شما مجوز ارسال اعلان در زنگوله پروفایل مددجو را ندارید.' });
+      }
+      if (sendDirectSms === true && !userHasPerm(req.authUser, 'sendBeneficiarySms')) {
+        return res.status(403).json({ error: 'شما مجوز ارسال پیامک به مددجو را ندارید.' });
+      }
+      if (sendPush === true && !userHasPerm(req.authUser, 'sendBeneficiaryPush')) {
+        return res.status(403).json({ error: 'شما مجوز ارسال پوش نوتیفیکیشن به مددجو را ندارید.' });
+      }
 
       const existing = await prisma.customFormSubmission.findUnique({
         where: { id },
@@ -3419,6 +3744,30 @@ app.patch(
       });
       if (!existing) {
         return res.status(404).json({ error: 'رکورد مورد نظر یافت نشد.' });
+      }
+
+      const submittedDataPre = safeJsonParseArray(existing.data);
+      const nameFromFields = submittedDataPre.find(
+        (f: any) => /نام|متقاضی|نام خانوادگی/i.test(String(f?.label || '')) && String(f?.value || '').trim()
+      );
+      const resolvedName =
+        existing.beneficiary?.fullName ||
+        (nameFromFields ? String(nameFromFields.value).trim() : null);
+
+      // Strictly validate approved SMS template if direct SMS is requested
+      let resolvedSmsText: string | null = null;
+      let resolvedSmsTemplateTitle: string | null = null;
+      if (sendDirectSms === true) {
+        const tplRes = await resolveApprovedSmsText(smsTemplateId, {
+          name: resolvedName,
+          trackingCode: existing.trackingCode,
+          formTitle: existing.form.title,
+        });
+        if (tplRes.error || !tplRes.text) {
+          return res.status(400).json({ error: tplRes.error || 'قالب پیامک مجاز انتخاب نشده است.' });
+        }
+        resolvedSmsText = tplRes.text;
+        resolvedSmsTemplateTitle = tplRes.templateTitle || null;
       }
 
       const senderName = req.authUser?.name || req.authUser?.username || 'کارشناس';
@@ -3462,11 +3811,11 @@ app.patch(
         });
       }
 
-      // Direct multi-channel notification (Bell In-App + Direct SMS + Web Push)
+      // Direct multi-channel notification (Bell In-App + Approved-Template Direct SMS + Web Push)
       let notificationResult: any = undefined;
       const shouldDispatchDirect =
-        Boolean(cleanNewExpertMsg) &&
-        (sendInApp === true || sendDirectSms === true || sendPush === true);
+        (Boolean(cleanNewExpertMsg) && (sendInApp === true || sendPush === true)) ||
+        sendDirectSms === true;
 
       if (shouldDispatchDirect) {
         const phoneFromFields = submittedData.find(
@@ -3481,6 +3830,7 @@ app.patch(
         notificationResult = await dispatchBeneficiaryNotification({
           beneficiaryId: updated.beneficiaryId || updated.beneficiary?.id || null,
           phone: targetPhone,
+          beneficiaryName: resolvedName,
           title: `پیام کارشناس درباره «${updated.form.title}»`,
           message: cleanNewExpertMsg,
           type: updated.status === 'NEEDS_INFO' ? 'NEEDS_INFO' : 'EXPERT_MESSAGE',
@@ -3490,6 +3840,9 @@ app.patch(
           senderName,
           sendInApp: sendInApp === true,
           sendSms: sendDirectSms === true,
+          smsTemplateId: smsTemplateId ? Number(smsTemplateId) : null,
+          resolvedSmsText,
+          resolvedSmsTemplateTitle,
           sendPush: sendPush === true,
         });
       }
@@ -3508,7 +3861,7 @@ app.patch(
 app.delete(
   '/api/forms/submissions/:submissionId',
   requireAuth,
-  requirePerm('manageSettings', 'decideInbox'),
+  requirePerm('deleteInbox', 'manageForms'),
   async (req, res) => {
     try {
       const id = parseInt(req.params.submissionId);

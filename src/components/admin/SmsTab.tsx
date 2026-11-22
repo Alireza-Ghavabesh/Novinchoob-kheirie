@@ -19,10 +19,23 @@ import {
   Bell,
   BellRing,
   Smartphone,
+  ShieldCheck,
+  FileText,
+  Lock,
 } from 'lucide-react';
-import { AppConfig, SmsConfig, SmsRule, SmsLog, SmsEventType, SmsTargetType, StaffUser } from '../../types';
+import {
+  AppConfig,
+  SmsConfig,
+  SmsRule,
+  SmsLog,
+  SmsTemplate,
+  SmsEventType,
+  SmsTargetType,
+  StaffUser,
+} from '../../types';
 import { api } from '../../services/api';
 import { appendSmsCancellationFooter } from '../../utils/smsFormat';
+import { hasPermission, renderSmsTemplatePreview } from '../../utils/permissions';
 import { OtpSmsSettingsCard } from './OtpSmsSettingsCard';
 
 interface SmsTabProps {
@@ -38,7 +51,12 @@ export const SmsTab: React.FC<SmsTabProps> = ({
   onConfigUpdated,
   onCurrentUserUpdated,
 }) => {
-  const [subTab, setSubTab] = useState<'rules' | 'config' | 'push' | 'logs' | 'test'>('rules');
+  const canManageTemplates = hasPermission(currentUser, 'manageSmsTemplates');
+  const canManageSms = hasPermission(currentUser, 'manageSms');
+
+  const [subTab, setSubTab] = useState<'templates' | 'rules' | 'config' | 'push' | 'logs' | 'test'>(
+    'templates'
+  );
   const [config, setConfig] = useState<SmsConfig>({
     id: 1,
     apiKey: '',
@@ -49,10 +67,20 @@ export const SmsTab: React.FC<SmsTabProps> = ({
     isEnabled: true,
   });
   const [rules, setRules] = useState<SmsRule[]>([]);
+  const [templates, setTemplates] = useState<SmsTemplate[]>([]);
   const [logs, setLogs] = useState<SmsLog[]>([]);
   const [users, setUsers] = useState<StaffUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Approved SMS Template Editor State (Admin Only)
+  const [isEditingTemplate, setIsEditingTemplate] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<number | null>(null);
+  const [tplTitle, setTplTitle] = useState('');
+  const [tplCategory, setTplCategory] = useState('GENERAL');
+  const [tplBody, setTplBody] = useState('');
+  const [tplActive, setTplActive] = useState(true);
+  const [savingTpl, setSavingTpl] = useState(false);
 
   // Form state for rule creation/editing
   const [isEditingRule, setIsEditingRule] = useState(false);
@@ -89,9 +117,9 @@ export const SmsTab: React.FC<SmsTabProps> = ({
     isActive: true,
   });
 
-  // Test SMS State
+  // Test SMS State (Strictly Approved Template Only)
   const [testReceptor, setTestReceptor] = useState('');
-  const [testMessage, setTestMessage] = useState('سلام، این یک پیامک آزمایشی از سامانه مؤسسه خیریه است.');
+  const [testTemplateId, setTestTemplateId] = useState<number | ''>('');
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
 
@@ -111,14 +139,18 @@ export const SmsTab: React.FC<SmsTabProps> = ({
   const fetchInitialData = async () => {
     try {
       setLoading(true);
-      const [cfg, rls, lgs, usrs] = await Promise.all([
-        api.getSmsConfig(),
-        api.getSmsRules(),
-        api.getSmsLogs(),
+      const [cfg, rls, tpls, lgs, usrs] = await Promise.all([
+        api.getSmsConfig().catch(() => config),
+        api.getSmsRules().catch(() => []),
+        api.getSmsTemplates(true).catch(() => []),
+        api.getSmsLogs().catch(() => []),
         api.getUsers().catch(() => []),
       ]);
       setConfig(cfg);
       setRules(rls);
+      setTemplates(Array.isArray(tpls) ? tpls : []);
+      const firstActive = (Array.isArray(tpls) ? tpls : []).find((t) => t.isActive);
+      if (firstActive && !testTemplateId) setTestTemplateId(firstActive.id);
       setLogs(lgs);
       setUsers(usrs);
     } catch (err: any) {
@@ -246,20 +278,97 @@ export const SmsTab: React.FC<SmsTabProps> = ({
     setIsEditingRule(true);
   };
 
+  const openNewTemplate = () => {
+    setEditingTemplateId(null);
+    setTplTitle('');
+    setTplCategory('GENERAL');
+    setTplBody('سلام {name} عزیز، ');
+    setTplActive(true);
+    setIsEditingTemplate(true);
+  };
+
+  const openEditTemplate = (tpl: SmsTemplate) => {
+    setEditingTemplateId(tpl.id);
+    setTplTitle(tpl.title);
+    setTplCategory(tpl.category || 'GENERAL');
+    setTplBody(tpl.body);
+    setTplActive(tpl.isActive);
+    setIsEditingTemplate(true);
+  };
+
+  const handleSaveTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tplTitle.trim() || !tplBody.trim()) {
+      notify('عنوان و متن پیامک مجاز الزامی است.', 'error');
+      return;
+    }
+    setSavingTpl(true);
+    try {
+      if (editingTemplateId) {
+        const updated = await api.updateSmsTemplate(editingTemplateId, {
+          title: tplTitle.trim(),
+          category: tplCategory,
+          body: tplBody.trim(),
+          isActive: tplActive,
+        });
+        setTemplates((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+        notify('متن پیامک مجاز با موفقیت ویرایش شد.');
+      } else {
+        const created = await api.createSmsTemplate({
+          title: tplTitle.trim(),
+          category: tplCategory,
+          body: tplBody.trim(),
+          isActive: tplActive,
+        });
+        setTemplates((prev) => [...prev, created]);
+        notify('متن پیامک مجاز جدید با موفقیت ثبت شد.');
+      }
+      setIsEditingTemplate(false);
+      setEditingTemplateId(null);
+    } catch (err: any) {
+      notify(err.message || 'خطا در ذخیره متن پیامک مجاز', 'error');
+    } finally {
+      setSavingTpl(false);
+    }
+  };
+
+  const handleToggleTemplateActive = async (tpl: SmsTemplate) => {
+    try {
+      const updated = await api.updateSmsTemplate(tpl.id, { isActive: !tpl.isActive });
+      setTemplates((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      notify(`متن «${tpl.title}» ${updated.isActive ? 'فعال' : 'غیرفعال'} شد.`);
+    } catch (err: any) {
+      notify(err.message || 'خطا در تغییر وضعیت قالب پیامک', 'error');
+    }
+  };
+
+  const handleDeleteTemplate = async (tpl: SmsTemplate) => {
+    if (!window.confirm(`آیا از حذف متن مجاز «${tpl.title}» اطمینان دارید؟`)) return;
+    try {
+      await api.deleteSmsTemplate(tpl.id);
+      setTemplates((prev) => prev.filter((t) => t.id !== tpl.id));
+      notify('متن پیامک مجاز حذف شد.');
+    } catch (err: any) {
+      notify(err.message || 'خطا در حذف متن پیامک', 'error');
+    }
+  };
+
   const handleSendTestSms = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!testReceptor) {
       notify('شماره موبایل گیرنده را وارد نمایید.', 'error');
       return;
     }
+    if (!testTemplateId) {
+      notify('لطفاً یکی از متن‌های مجاز ثبت‌شده در بانک پیامک را انتخاب کنید.', 'error');
+      return;
+    }
     try {
       setTestSending(true);
       setTestResult(null);
-      const formattedMessage = appendSmsCancellationFooter(testMessage);
-      setTestMessage(formattedMessage);
-      const res = await api.testSms(testReceptor, formattedMessage);
+      const res = await api.testSms(testReceptor, Number(testTemplateId));
       setTestResult(res);
-      notify('درخواست ارسال تست با موفقیت پردازش شد.');
+      notify('درخواست ارسال تست با متن مجاز با موفقیت پردازش شد.');
       const lgs = await api.getSmsLogs();
       setLogs(lgs);
     } catch (err: any) {
@@ -462,65 +571,309 @@ export const SmsTab: React.FC<SmsTabProps> = ({
       {/* Sub navigation Tabs */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
         <button
-          onClick={() => setSubTab('rules')}
+          onClick={() => setSubTab('templates')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
-            subTab === 'rules'
-              ? 'bg-slate-900 text-white shadow'
+            subTab === 'templates'
+              ? 'bg-emerald-700 text-white shadow'
               : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
-          <Sliders className="w-4 h-4" />
-          شروط و قوانین ارسال ({rules.length})
+          <ShieldCheck className="w-4 h-4" />
+          بانک متن‌های مجاز پیامک ({templates.length})
         </button>
 
-        <button
-          onClick={() => setSubTab('config')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
-            subTab === 'config'
-              ? 'bg-slate-900 text-white shadow'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Key className="w-4 h-4" />
-          تنظیمات قاصدک، احراز هویت OTP و دامین
-        </button>
+        {canManageSms && (
+          <>
+            <button
+              onClick={() => setSubTab('rules')}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                subTab === 'rules'
+                  ? 'bg-slate-900 text-white shadow'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Sliders className="w-4 h-4" />
+              شروط و قوانین ارسال ({rules.length})
+            </button>
 
-        <button
-          onClick={() => setSubTab('push')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
-            subTab === 'push'
-              ? 'bg-slate-900 text-white shadow'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Bell className="w-4 h-4 text-emerald-400" />
-          پوش نوتیفیکیشن گوشی ({pushDevices.length} دستگاه)
-        </button>
+            <button
+              onClick={() => setSubTab('config')}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                subTab === 'config'
+                  ? 'bg-slate-900 text-white shadow'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Key className="w-4 h-4" />
+              تنظیمات قاصدک، احراز هویت OTP و دامین
+            </button>
 
-        <button
-          onClick={() => setSubTab('test')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
-            subTab === 'test'
-              ? 'bg-slate-900 text-white shadow'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Send className="w-4 h-4" />
-          تست ارسال دستی
-        </button>
+            <button
+              onClick={() => setSubTab('push')}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                subTab === 'push'
+                  ? 'bg-slate-900 text-white shadow'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Bell className="w-4 h-4 text-emerald-400" />
+              پوش نوتیفیکیشن گوشی ({pushDevices.length} دستگاه)
+            </button>
 
-        <button
-          onClick={() => setSubTab('logs')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
-            subTab === 'logs'
-              ? 'bg-slate-900 text-white shadow'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <History className="w-4 h-4" />
-          تاریخچه و گزارشات ارسال ({logs.length})
-        </button>
+            <button
+              onClick={() => setSubTab('test')}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                subTab === 'test'
+                  ? 'bg-slate-900 text-white shadow'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Send className="w-4 h-4" />
+              تست ارسال با متن مجاز
+            </button>
+
+            <button
+              onClick={() => setSubTab('logs')}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${
+                subTab === 'logs'
+                  ? 'bg-slate-900 text-white shadow'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <History className="w-4 h-4" />
+              تاریخچه و گزارشات ارسال ({logs.length})
+            </button>
+          </>
+        )}
       </div>
+
+      {/* 0. APPROVED SMS TEMPLATES BANK */}
+      {subTab === 'templates' && (
+        <div className="space-y-4">
+          <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-emerald-950">
+                  بانک متن‌های مجاز پیامک (ارسال بدون متن دلخواه)
+                </h3>
+                <p className="text-xs text-emerald-900/80 mt-0.5 leading-relaxed">
+                  در کل سامانه، هیچ کارشناس یا مدیری امکان ارسال پیامک با متن دلخواه به مددجویان را ندارد. پیامک‌ها صرفاً از میان متن‌های ثبت‌شده و فعال در این فهرست ارسال می‌شوند و ثبت یا ویرایش متن‌ها تنها در اختیار مدیر کل (ادمین) است.
+                </p>
+              </div>
+            </div>
+            {canManageTemplates ? (
+              !isEditingTemplate && (
+                <button
+                  type="button"
+                  onClick={openNewTemplate}
+                  className="inline-flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow transition cursor-pointer shrink-0"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>ثبت متن پیامک مجاز جدید</span>
+                </button>
+              )
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-600 text-[11px] font-bold shrink-0">
+                <Lock className="w-3.5 h-3.5 text-rose-500" />
+                فقط مدیر کل مجاز به ثبت/ویرایش است
+              </span>
+            )}
+          </div>
+
+          {canManageTemplates && isEditingTemplate && (
+            <form
+              onSubmit={handleSaveTemplate}
+              className="bg-white rounded-2xl border border-emerald-300 shadow-sm p-5 space-y-4 text-xs"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h4 className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-emerald-600" />
+                  <span>{editingTemplateId ? 'ویرایش متن پیامک مجاز' : 'ثبت متن پیامک مجاز جدید'}</span>
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingTemplate(false)}
+                  className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  انصراف
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    عنوان نمایشی قالب <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={tplTitle}
+                    onChange={(e) => setTplTitle(e.target.value)}
+                    placeholder="مثال: یادآوری تکمیل مدارک پرونده"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">دسته‌بندی موضوع</label>
+                  <select
+                    value={tplCategory}
+                    onChange={(e) => setTplCategory(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="GENERAL">عمومی و اطلاع‌رسانی</option>
+                    <option value="NEEDS_INFO">نقص مدارک و اصلاح پرونده</option>
+                    <option value="EXPERT_MESSAGE">پیام کارشناس در پروفایل</option>
+                    <option value="APPROVED">تأیید و تصویب درخواست</option>
+                    <option value="FOLLOWUP">دعوت به تماس یا مراجعه</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="font-semibold text-slate-700">
+                    متن دقیق پیامک <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[
+                      { code: '{name}', label: 'نام مددجو' },
+                      { code: '{trackingCode}', label: 'کد رهگیری' },
+                      { code: '{formTitle}', label: 'عنوان فرم' },
+                      { code: '{instName}', label: 'نام خیریه' },
+                    ].map((ph) => (
+                      <button
+                        key={ph.code}
+                        type="button"
+                        onClick={() => setTplBody((prev) => `${prev}${prev.endsWith(' ') || !prev ? '' : ' '}${ph.code}`)}
+                        className="px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-[10px] font-semibold text-slate-700 cursor-pointer"
+                      >
+                        <span className="font-mono text-emerald-700 dir-ltr">{ph.code}</span> ({ph.label})
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <textarea
+                  rows={3}
+                  required
+                  value={tplBody}
+                  onChange={(e) => setTplBody(e.target.value)}
+                  placeholder="سلام {name} عزیز، پرونده شما با کد رهگیری {trackingCode} نیازمند تکمیل مدارک است. {instName}"
+                  className="w-full p-3 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500 leading-relaxed"
+                />
+                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600">
+                  <span className="font-bold text-slate-800 block mb-0.5">پیش‌نمایش نمونه پیامک ارسالی:</span>
+                  {renderSmsTemplatePreview(tplBody, {
+                    name: 'فاطمه حسینی',
+                    trackingCode: 'REQ-1405-2041',
+                    formTitle: 'فرم درخواست عمومی',
+                    instName: appConfig?.instName,
+                  })}
+                  <span className="block text-[10px] text-emerald-700 font-mono mt-1">لغو 11</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                <label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={tplActive}
+                    onChange={(e) => setTplActive(e.target.checked)}
+                    className="rounded text-emerald-600"
+                  />
+                  <span>این متن فعال و قابل انتخاب برای ارسال پیامک باشد</span>
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingTemplate(false)}
+                    className="px-4 py-2 rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-50 cursor-pointer"
+                  >
+                    انصراف
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingTpl}
+                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>{savingTpl ? 'در حال ذخیره...' : 'ذخیره متن مجاز'}</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            {templates.map((tpl) => (
+              <div
+                key={tpl.id}
+                className={`bg-white rounded-2xl border p-4 shadow-sm flex flex-col justify-between gap-3 ${
+                  tpl.isActive ? 'border-slate-200' : 'border-slate-200 bg-slate-50 opacity-75'
+                }`}
+              >
+                <div className="space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="font-extrabold text-sm text-slate-900">{tpl.title}</h4>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          tpl.isActive
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {tpl.isActive ? 'فعال' : 'غیرفعال'}
+                      </span>
+                    </div>
+
+                    {canManageTemplates && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleTemplateActive(tpl)}
+                          className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[10px] font-bold text-slate-700 cursor-pointer"
+                        >
+                          {tpl.isActive ? 'غیرفعال‌سازی' : 'فعال‌سازی'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEditTemplate(tpl)}
+                          className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg cursor-pointer"
+                          title="ویرایش متن"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTemplate(tpl)}
+                          className="p-1.5 text-rose-400 hover:text-rose-700 hover:bg-rose-50 rounded-lg cursor-pointer"
+                          title="حذف متن"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-slate-700 bg-slate-50 border border-slate-200/80 rounded-xl p-3 leading-relaxed whitespace-pre-line">
+                    {tpl.body}
+                  </p>
+                </div>
+              </div>
+            ))}
+
+            {templates.length === 0 && (
+              <div className="md:col-span-2 bg-white rounded-2xl border border-dashed border-slate-300 p-8 text-center text-xs text-slate-500">
+                هنوز هیچ متن مجاز پیامکی ثبت نشده است.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 1. RULES TAB */}
       {subTab === 'rules' && (
@@ -1139,16 +1492,16 @@ export const SmsTab: React.FC<SmsTabProps> = ({
         </div>
       )}
 
-      {/* 3. TEST SMS TAB */}
+      {/* 3. TEST SMS TAB (Approved Templates Only) */}
       {subTab === 'test' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 max-w-xl mx-auto space-y-5">
           <div className="border-b border-slate-100 pb-3">
             <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
               <Send className="w-5 h-5 text-emerald-600" />
-              ارسال پیامک آزمایشی دستی
+              ارسال پیامک آزمایشی (فقط با متن‌های مجاز)
             </h3>
             <p className="text-xs text-slate-500">
-              جهت اطمینان از صحت کلید API قاصدک و فعال بودن خط فرستنده یک پیامک تستی بفرستید.
+              جهت اطمینان از صحت کلید API قاصدک و خط فرستنده، یکی از متن‌های مجاز ثبت‌شده را انتخاب و به شماره تست ارسال کنید.
             </p>
           </div>
 
@@ -1161,27 +1514,49 @@ export const SmsTab: React.FC<SmsTabProps> = ({
                 value={testReceptor}
                 onChange={e => setTestReceptor(e.target.value)}
                 placeholder="09123456789"
-                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-emerald-500"
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-emerald-500 font-mono dir-ltr text-right"
               />
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">متن پیامک آزمایشی:</label>
-              <textarea
-                rows={3}
+              <label className="block font-semibold text-slate-700 mb-1">
+                انتخاب متن مجاز پیامک (ثبت‌شده توسط مدیر کل):
+              </label>
+              <select
                 required
-                value={testMessage}
-                onChange={e => setTestMessage(e.target.value)}
-                className="w-full border border-slate-300 rounded-xl p-3 text-xs focus:ring-2 focus:ring-emerald-500"
-              />
-              <p className="text-[11px] text-emerald-700 bg-emerald-50/70 border border-emerald-200 rounded-lg px-2.5 py-1.5 mt-1.5">
-                عبارت <span className="font-bold font-mono">لغو 11</span> به صورت خودکار در خط جدید انتهای پیامک اضافه می‌شود.
-              </p>
+                value={testTemplateId}
+                onChange={e => setTestTemplateId(e.target.value ? Number(e.target.value) : '')}
+                className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-xs focus:ring-2 focus:ring-emerald-500 bg-white font-semibold"
+              >
+                <option value="">-- یکی از متن‌های مجاز را انتخاب کنید --</option>
+                {templates.filter(t => t.isActive).map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.title}
+                  </option>
+                ))}
+              </select>
+
+              {testTemplateId && (() => {
+                const chosen = templates.find(t => t.id === Number(testTemplateId));
+                if (!chosen) return null;
+                return (
+                  <div className="mt-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700 leading-relaxed">
+                    <span className="font-bold text-slate-800 block mb-1">پیش‌نمایش متن پیامک ارسالی:</span>
+                    {renderSmsTemplatePreview(chosen.body, {
+                      name: 'کاربر آزمایشی',
+                      trackingCode: 'TEST-1405',
+                      formTitle: 'فرم نمونه',
+                      instName: appConfig?.instName,
+                    })}
+                    <span className="block text-[10px] text-emerald-700 font-mono mt-1">لغو 11</span>
+                  </div>
+                );
+              })()}
             </div>
 
             <button
               type="submit"
-              disabled={testSending}
+              disabled={testSending || !testTemplateId}
               className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {testSending ? (
@@ -1192,7 +1567,7 @@ export const SmsTab: React.FC<SmsTabProps> = ({
               ) : (
                 <>
                   <Send className="w-4 h-4" />
-                  ارسال پیامک تست
+                  ارسال پیامک تست با قالب انتخاب‌شده
                 </>
               )}
             </button>

@@ -102,6 +102,31 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
   const [publicExpanded, setPublicExpanded] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [toast, setToast] = useState<{
+    type: 'success' | 'error';
+    title: string;
+    subtitle?: string;
+  } | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showToast = useCallback(
+    (type: 'success' | 'error', title: string, subtitle?: string) => {
+      if (toastTimerRef.current) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+      setToast({ type, title, subtitle });
+      toastTimerRef.current = window.setTimeout(() => {
+        setToast(null);
+      }, 4800);
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    };
+  }, []);
 
   // Public Request Form Fields State
   const [pubName, setPubName] = useState(beneficiary.fullName || '');
@@ -415,8 +440,15 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
           ? `ویرایش درخواست شما با موفقیت ذخیره شد (کد رهگیری: ${saved.trackingCode}).`
           : `${publicFormSchema.successMessage || 'درخواست شما با موفقیت ثبت شد.'} — کد رهگیری: ${saved.trackingCode}`
       );
+      showToast(
+        'success',
+        isEdit ? 'ویرایش فرم با موفقیت ذخیره شد' : 'فرم درخواست شما با موفقیت ثبت شد',
+        `کد رهگیری: ${saved.trackingCode}`
+      );
     } catch (err: any) {
-      setPubError(err.message || 'خطا در ثبت فرم درخواست عمومی');
+      const msg = err.message || 'خطا در ثبت فرم درخواست عمومی';
+      setPubError(msg);
+      showToast('error', 'خطا در ذخیره فرم درخواست عمومی', msg);
     } finally {
       setPubSubmitting(false);
     }
@@ -435,6 +467,7 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
     const extracted = validateAndExtractCustomFields(item.form.fields, currentValues, entities);
     if (extracted.error) {
       setErrorByForm((prev) => ({ ...prev, [formId]: extracted.error! }));
+      showToast('error', 'لطفاً فیلدهای الزامی را تکمیل نمایید', extracted.error);
       return;
     }
 
@@ -455,11 +488,20 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
           ? `ویرایش اطلاعات شما با موفقیت ثبت شد (کد پیگیری: ${savedSub.trackingCode}).`
           : `${item.form.successMessage || 'اطلاعات شما با موفقیت ثبت شد.'} — کد پیگیری: ${savedSub.trackingCode}`,
       }));
+      showToast(
+        'success',
+        isEdit
+          ? `تغییرات فرم «${item.form.title}» ذخیره شد`
+          : `فرم «${item.form.title}» با موفقیت ثبت شد`,
+        `کد پیگیری: ${savedSub.trackingCode}`
+      );
     } catch (err: any) {
+      const msg = err.message || 'خطا در ثبت اطلاعات فرم';
       setErrorByForm((prev) => ({
         ...prev,
-        [formId]: err.message || 'خطا در ثبت اطلاعات فرم',
+        [formId]: msg,
       }));
+      showToast('error', `خطا در ذخیره فرم «${item.form.title}»`, msg);
     } finally {
       setSubmittingFormId(null);
     }
@@ -1426,6 +1468,57 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Sleek Bottom Toast Notification */}
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-5 inset-x-4 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 z-50 flex justify-center pointer-events-none"
+        >
+          <div
+            className={`pointer-events-auto flex items-center gap-3 px-4 py-3.5 rounded-2xl shadow-2xl border backdrop-blur-md max-w-md w-full sm:w-auto sm:min-w-[320px] animate-in fade-in slide-in-from-bottom-4 duration-300 ${
+              toast.type === 'success'
+                ? 'bg-emerald-950/95 text-white border-emerald-500/40'
+                : 'bg-rose-950/95 text-white border-rose-500/40'
+            }`}
+          >
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                toast.type === 'success'
+                  ? 'bg-emerald-500/20 text-emerald-300'
+                  : 'bg-rose-500/20 text-rose-300'
+              }`}
+            >
+              {toast.type === 'success' ? (
+                <CheckCircle2 className="w-5 h-5" />
+              ) : (
+                <AlertTriangle className="w-5 h-5" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs sm:text-sm font-extrabold leading-snug">{toast.title}</p>
+              {toast.subtitle && (
+                <p
+                  className={`text-[11px] mt-0.5 truncate ${
+                    toast.type === 'success' ? 'text-emerald-200/90' : 'text-rose-200/90'
+                  }`}
+                >
+                  {toast.subtitle}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition cursor-pointer shrink-0"
+              aria-label="بستن اعلان"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
     </div>

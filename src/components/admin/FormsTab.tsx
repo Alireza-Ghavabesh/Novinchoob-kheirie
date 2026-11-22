@@ -33,6 +33,8 @@ import {
   CustomForm,
   CustomFormSubmission,
   CustomFormSubmissionStatus,
+  SmsTemplate,
+  StaffUser,
 } from '../../types';
 import {
   CUSTOM_FORM_STATUS_LABELS,
@@ -47,12 +49,14 @@ import {
 } from '../../utils/publicFormConfig';
 import { api } from '../../services/api';
 import { toPersianDigits } from '../../utils/persian';
+import { hasPermission, renderSmsTemplatePreview } from '../../utils/permissions';
 import { EntitiesManagerSection } from './EntitiesManagerSection';
 import { FormFieldsEditor } from './FormFieldsEditor';
 import { FormSmsRulesSection } from './FormSmsRulesSection';
 import { PublicFormBuilderSection } from './PublicFormBuilderSection';
 
 interface FormsTabProps {
+  currentUser?: StaffUser;
   config: AppConfig | null;
   needCategories: Category[];
   entities: EntityDefinition[];
@@ -69,17 +73,25 @@ const THEME_OPTIONS = [
 ];
 
 export const FormsTab: React.FC<FormsTabProps> = ({
+  currentUser,
   config,
   needCategories,
   entities,
   onRefreshEntities,
   onConfigUpdated,
 }) => {
+  const canManageForms = !currentUser || hasPermission(currentUser, 'manageForms');
+  const canSendBell = !currentUser || hasPermission(currentUser, 'sendBeneficiaryBell');
+  const canSendSms = !currentUser || hasPermission(currentUser, 'sendBeneficiarySms');
+  const canSendPush = !currentUser || hasPermission(currentUser, 'sendBeneficiaryPush');
+
   const [subTab, setSubTab] = useState<'forms' | 'entities'>('forms');
   const [editingPublicForm, setEditingPublicForm] = useState(false);
   const [copiedPublicForm, setCopiedPublicForm] = useState(false);
   const [togglingPublicPortal, setTogglingPublicPortal] = useState(false);
+  const [togglingFormPortalId, setTogglingFormPortalId] = useState<string | null>(null);
   const [forms, setForms] = useState<CustomForm[]>([]);
+  const [smsTemplates, setSmsTemplates] = useState<SmsTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState('');
@@ -113,10 +125,17 @@ export const FormsTab: React.FC<FormsTabProps> = ({
   const [subSendSms, setSubSendSms] = useState(true);
   const [subSendInApp, setSubSendInApp] = useState(true);
   const [subSendDirectSms, setSubSendDirectSms] = useState(false);
+  const [subSmsTemplateId, setSubSmsTemplateId] = useState<number | ''>('');
   const [subSendPush, setSubSendPush] = useState(true);
   const [subStatusInput, setSubStatusInput] = useState<CustomFormSubmissionStatus>('NEW');
   const [savingSub, setSavingSub] = useState(false);
   const [subFeedback, setSubFeedback] = useState('');
+
+  useEffect(() => {
+    api.getSmsTemplates(false).then((list) => {
+      setSmsTemplates(Array.isArray(list) ? list : []);
+    }).catch(() => undefined);
+  }, []);
 
   const loadForms = useCallback(async () => {
     setLoading(true);
@@ -308,22 +327,48 @@ export const FormsTab: React.FC<FormsTabProps> = ({
     }
   };
 
+  const handleToggleCustomFormPortal = async (f: CustomForm) => {
+    if (!canManageForms) return;
+    setTogglingFormPortalId(f.id);
+    setErrorMsg('');
+    try {
+      const nextVal = !f.showInBeneficiaryPortal;
+      const updated = await api.updateForm(f.id, { showInBeneficiaryPortal: nextVal });
+      setForms((prev) => prev.map((item) => (item.id === f.id ? updated : item)));
+      setStatusMsg(
+        nextVal
+          ? `فرم «${f.title}» در پروفایل مددجو فعال شد و اکنون برای مددجویان نمایش داده می‌شود.`
+          : `نمایش فرم «${f.title}» در پروفایل مددجو غیرفعال شد.`
+      );
+    } catch (err: any) {
+      setErrorMsg(err.message || 'خطا در تغییر وضعیت نمایش فرم در پروفایل مددجو');
+    } finally {
+      setTogglingFormPortalId(null);
+    }
+  };
+
   const openSubmissionDetail = (sub: CustomFormSubmission) => {
     setSelectedSub(sub);
     setSubStatusInput(sub.status || 'NEW');
     setSubNoteInput(sub.note || '');
     setSubExpertMsgInput(sub.expertMessage || '');
     setSubSendSms(true);
-    setSubSendInApp(true);
+    setSubSendInApp(canSendBell);
     setSubSendDirectSms(false);
-    setSubSendPush(true);
+    setSubSmsTemplateId(smsTemplates[0]?.id ?? '');
+    setSubSendPush(canSendPush);
     setSubFeedback('');
   };
 
   const handleUpdateSubmission = async () => {
     if (!selectedSub || !viewingForm) return;
+    if (subSendDirectSms && !subSmsTemplateId) {
+      setErrorMsg('برای ارسال پیامک، انتخاب یکی از متن‌های مجاز ثبت‌شده توسط ادمین الزامی است.');
+      return;
+    }
     setSavingSub(true);
     setSubFeedback('');
+    setErrorMsg('');
     try {
       const hasMsg = Boolean(subExpertMsgInput.trim());
       const updated = await api.updateFormSubmission(selectedSub.id, {
@@ -331,9 +376,10 @@ export const FormsTab: React.FC<FormsTabProps> = ({
         note: subNoteInput,
         expertMessage: subExpertMsgInput,
         sendSms: subSendSms,
-        sendInApp: hasMsg ? subSendInApp : false,
-        sendDirectSms: hasMsg ? subSendDirectSms : false,
-        sendPush: hasMsg ? subSendPush : false,
+        sendInApp: canSendBell && hasMsg ? subSendInApp : false,
+        sendDirectSms: canSendSms ? subSendDirectSms : false,
+        smsTemplateId: subSendDirectSms && subSmsTemplateId ? Number(subSmsTemplateId) : null,
+        sendPush: canSendPush && hasMsg ? subSendPush : false,
       });
       setSubmissions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
       setSelectedSub(updated);
@@ -344,7 +390,7 @@ export const FormsTab: React.FC<FormsTabProps> = ({
       }
       if (updated.notificationResult?.sms?.attempted) {
         if (updated.notificationResult.sms.sent) {
-          parts.push('پیامک مستقیم ارسال شد');
+          parts.push('پیامک مجاز ارسال شد');
         } else if (updated.notificationResult.sms.error) {
           parts.push(`پیامک ارسال نشد (${updated.notificationResult.sms.error})`);
         }
@@ -750,24 +796,75 @@ export const FormsTab: React.FC<FormsTabProps> = ({
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => openEditForm(f)}
-                        className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
-                        title="ویرایش فرم و فیلدها"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteForm(f)}
-                        className="p-1.5 text-rose-400 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                        title="حذف فرم"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {canManageForms && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => openEditForm(f)}
+                            className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
+                            title="ویرایش فرم و فیلدها"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteForm(f)}
+                            className="p-1.5 text-rose-400 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                            title="حذف فرم"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
                     </div>
+                  </div>
+
+                  {/* Direct 1-Click Beneficiary Portal Toggle */}
+                  <div
+                    className={`rounded-xl border px-3 py-2 flex items-center justify-between gap-2 transition ${
+                      f.showInBeneficiaryPortal
+                        ? 'bg-teal-50/80 border-teal-200'
+                        : 'bg-slate-50 border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 text-[11px] font-bold">
+                      <UserCheck
+                        className={`w-4 h-4 shrink-0 ${
+                          f.showInBeneficiaryPortal ? 'text-teal-700' : 'text-slate-400'
+                        }`}
+                      />
+                      <span
+                        className={
+                          f.showInBeneficiaryPortal ? 'text-teal-900' : 'text-slate-600'
+                        }
+                      >
+                        {f.showInBeneficiaryPortal
+                          ? 'فعال در پروفایل مددجو'
+                          : 'نمایش در پروفایل مددجو غیرفعال است'}
+                      </span>
+                    </div>
+
+                    {canManageForms && (
+                      <button
+                        type="button"
+                        disabled={togglingFormPortalId === f.id}
+                        onClick={() => handleToggleCustomFormPortal(f)}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer disabled:opacity-50 shrink-0 ${
+                          f.showInBeneficiaryPortal
+                            ? 'bg-teal-600 hover:bg-teal-700 text-white border-teal-700'
+                            : 'bg-white hover:bg-teal-50 text-teal-800 border-teal-300'
+                        }`}
+                      >
+                        <span>
+                          {togglingFormPortalId === f.id
+                            ? 'در حال تغییر...'
+                            : f.showInBeneficiaryPortal
+                            ? 'فعال ✓'
+                            : 'فعال‌سازی در پروفایل مددجو'}
+                        </span>
+                      </button>
+                    )}
                   </div>
 
                   {/* Shareable URL */}
@@ -816,12 +913,6 @@ export const FormsTab: React.FC<FormsTabProps> = ({
                       <HardDrive className="w-3 h-3 text-slate-400" />
                       سقف فایل: {toPersianDigits(f.maxFileSizeMB || 5)} مگابایت
                     </span>
-                    {f.showInBeneficiaryPortal && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200 text-[10px] font-bold">
-                        <UserCheck className="w-3 h-3" />
-                        پروفایل مددجو
-                      </span>
-                    )}
                     {Array.isArray(f.smsRules) && f.smsRules.length > 0 && (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] font-bold">
                         <MessageSquare className="w-3 h-3" />
@@ -832,14 +923,16 @@ export const FormsTab: React.FC<FormsTabProps> = ({
                 </div>
 
                 <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openEditForm(f)}
-                    className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                    <span>طراحی فیلدها</span>
-                  </button>
+                  {canManageForms && (
+                    <button
+                      type="button"
+                      onClick={() => openEditForm(f)}
+                      className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>طراحی فیلدها</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => openSubmissions(f)}
@@ -1380,39 +1473,99 @@ export const FormsTab: React.FC<FormsTabProps> = ({
 
                           {/* Multi-channel delivery toggles */}
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                            <label className="flex items-center gap-1.5 cursor-pointer bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-800">
-                              <input
-                                type="checkbox"
-                                checked={subSendInApp}
-                                onChange={(e) => setSubSendInApp(e.target.checked)}
-                                className="rounded text-emerald-600"
-                              />
-                              <Bell className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                              <span>زنگوله پروفایل</span>
-                            </label>
+                            {canSendBell && (
+                              <label className="flex items-center gap-1.5 cursor-pointer bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-800">
+                                <input
+                                  type="checkbox"
+                                  checked={subSendInApp}
+                                  onChange={(e) => setSubSendInApp(e.target.checked)}
+                                  className="rounded text-emerald-600"
+                                />
+                                <Bell className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                <span>زنگوله پروفایل</span>
+                              </label>
+                            )}
 
-                            <label className="flex items-center gap-1.5 cursor-pointer bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-800">
-                              <input
-                                type="checkbox"
-                                checked={subSendDirectSms}
-                                onChange={(e) => setSubSendDirectSms(e.target.checked)}
-                                className="rounded text-emerald-600"
-                              />
-                              <MessageSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                              <span>ارسال پیامک همین متن</span>
-                            </label>
+                            {canSendSms && (
+                              <label className="flex items-center gap-1.5 cursor-pointer bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-800">
+                                <input
+                                  type="checkbox"
+                                  checked={subSendDirectSms}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setSubSendDirectSms(checked);
+                                    if (checked && !subSmsTemplateId && smsTemplates[0]) {
+                                      setSubSmsTemplateId(smsTemplates[0].id);
+                                    }
+                                  }}
+                                  className="rounded text-emerald-600"
+                                />
+                                <MessageSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span>ارسال پیامک (متن مجاز)</span>
+                              </label>
+                            )}
 
-                            <label className="flex items-center gap-1.5 cursor-pointer bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-800">
-                              <input
-                                type="checkbox"
-                                checked={subSendPush}
-                                onChange={(e) => setSubSendPush(e.target.checked)}
-                                className="rounded text-emerald-600"
-                              />
-                              <Smartphone className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                              <span>پوش نوتیفیکیشن</span>
-                            </label>
+                            {canSendPush && (
+                              <label className="flex items-center gap-1.5 cursor-pointer bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-800">
+                                <input
+                                  type="checkbox"
+                                  checked={subSendPush}
+                                  onChange={(e) => setSubSendPush(e.target.checked)}
+                                  className="rounded text-emerald-600"
+                                />
+                                <Smartphone className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                <span>پوش نوتیفیکیشن</span>
+                              </label>
+                            )}
                           </div>
+
+                          {/* Strict Approved SMS Template Selector */}
+                          {canSendSms && subSendDirectSms && (
+                            <div className="p-2.5 rounded-xl bg-emerald-50/90 border border-emerald-200 space-y-2">
+                              <label className="block text-[11px] font-bold text-emerald-950">
+                                انتخاب متن مجاز پیامک (ثبت‌شده توسط مدیر کل):
+                              </label>
+                              {smsTemplates.length === 0 ? (
+                                <p className="text-[11px] text-rose-700 font-semibold">
+                                  هنوز هیچ متن پیامک مجازی در پنل پیامک ثبت نشده است.
+                                </p>
+                              ) : (
+                                <>
+                                  <select
+                                    value={subSmsTemplateId}
+                                    onChange={(e) =>
+                                      setSubSmsTemplateId(e.target.value ? Number(e.target.value) : '')
+                                    }
+                                    className="w-full px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-white text-[11px] font-semibold text-slate-800 outline-none"
+                                  >
+                                    <option value="">-- یک متن مجاز را انتخاب کنید --</option>
+                                    {smsTemplates.map((tpl) => (
+                                      <option key={tpl.id} value={tpl.id}>
+                                        {tpl.title}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {subSmsTemplateId && (() => {
+                                    const chosen = smsTemplates.find((t) => t.id === Number(subSmsTemplateId));
+                                    if (!chosen) return null;
+                                    return (
+                                      <div className="p-2 rounded-lg bg-white border border-emerald-200/80 text-[11px] text-slate-700 leading-relaxed">
+                                        <span className="text-[10px] font-bold text-emerald-700 block mb-0.5">
+                                          پیش‌نمایش متن پیامک ارسالی (غیرقابل ویرایش دستی):
+                                        </span>
+                                        {renderSmsTemplatePreview(chosen.body, {
+                                          name: selectedSub.beneficiary?.fullName || 'مددجوی گرامی',
+                                          trackingCode: selectedSub.trackingCode,
+                                          formTitle: viewingForm?.title,
+                                          instName: config?.instName,
+                                        })}
+                                      </div>
+                                    );
+                                  })()}
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">

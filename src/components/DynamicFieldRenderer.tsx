@@ -24,6 +24,7 @@ import {
 } from '../utils/publicFormConfig';
 import { toEnglishDigits, toPersianDigits } from '../utils/persian';
 import { api } from '../services/api';
+import { ShamsiDatePicker } from './ShamsiDatePicker';
 
 export type DynamicFormValuesMap = Record<string, any>;
 
@@ -673,6 +674,14 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
             onChange={(e) => updateSubVal(e.target.value)}
             className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
           />
+        ) : sub.type === 'date' ? (
+          <ShamsiDatePicker
+            value={String(val ?? '')}
+            onChange={(nextVal) => updateSubVal(nextVal)}
+            placeholder={sub.placeholder}
+            required={Boolean(sub.required)}
+            compact
+          />
         ) : (
           <input
             type={
@@ -693,7 +702,6 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
             dir={
               sub.type === 'phone' ||
               sub.type === 'national_id' ||
-              sub.type === 'date' ||
               sub.type === 'currency'
                 ? 'ltr'
                 : undefined
@@ -705,8 +713,6 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
                 ? '09123456789'
                 : sub.type === 'national_id'
                 ? '0012345678'
-                : sub.type === 'date'
-                ? '1365/05/12'
                 : sub.type === 'currency'
                 ? 'مبلغ به تومان'
                 : '')
@@ -714,7 +720,7 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
             value={String(val ?? '')}
             onChange={(e) => updateSubVal(e.target.value)}
             className={`w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none bg-white ${
-              sub.type === 'phone' || sub.type === 'national_id' || sub.type === 'date'
+              sub.type === 'phone' || sub.type === 'national_id'
                 ? 'font-mono text-left'
                 : ''
             }`}
@@ -1134,27 +1140,24 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
                   </p>
                 )}
               </div>
-            ) : field.type === 'national_id' || field.type === 'date' || field.type === 'phone' ? (
+            ) : field.type === 'date' ? (
+              <ShamsiDatePicker
+                value={String(values[field.id] ?? '')}
+                onChange={(nextVal) => setFieldValue(field.id, nextVal)}
+                placeholder={field.placeholder}
+                required={Boolean(field.required)}
+              />
+            ) : field.type === 'national_id' || field.type === 'phone' ? (
               <div className="relative">
                 <input
                   type={field.type === 'phone' ? 'tel' : 'text'}
-                  inputMode={
-                    field.type === 'national_id'
-                      ? 'numeric'
-                      : field.type === 'phone'
-                      ? 'tel'
-                      : 'text'
-                  }
+                  inputMode={field.type === 'national_id' ? 'numeric' : 'tel'}
                   maxLength={field.type === 'national_id' ? 10 : undefined}
                   dir="ltr"
                   required={Boolean(field.required)}
                   placeholder={
                     field.placeholder ||
-                    (field.type === 'phone'
-                      ? '09123456789'
-                      : field.type === 'national_id'
-                      ? '0012345678'
-                      : '1365/05/12')
+                    (field.type === 'phone' ? '09123456789' : '0012345678')
                   }
                   value={String(values[field.id] ?? '')}
                   onChange={(e) => setFieldValue(field.id, e.target.value)}
@@ -1165,9 +1168,6 @@ export const DynamicFieldRenderer: React.FC<DynamicFieldRendererProps> = ({
                 )}
                 {field.type === 'national_id' && (
                   <CreditCard className="w-4 h-4 text-slate-400 absolute right-3.5 top-3.5 pointer-events-none" />
-                )}
-                {field.type === 'date' && (
-                  <Calendar className="w-4 h-4 text-slate-400 absolute right-3.5 top-3.5 pointer-events-none" />
                 )}
               </div>
             ) : (

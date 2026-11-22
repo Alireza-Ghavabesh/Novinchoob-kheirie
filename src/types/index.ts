@@ -83,14 +83,43 @@ export interface Program {
 }
 
 export interface UserPermissions {
+  // متقاضیان و کارتابل
   viewInbox?: boolean;
+  createRequest?: boolean;
   decideInbox?: boolean;
+  deleteInbox?: boolean;
+  exportInbox?: boolean;
+  // ارتباط با مددجو و اعلانات
+  sendBeneficiaryBell?: boolean;
+  sendBeneficiarySms?: boolean;
+  sendBeneficiaryPush?: boolean;
+  // فرم‌ساز و موجودیت‌ها
+  viewForms?: boolean;
+  manageForms?: boolean;
+  // طرح‌ها و برنامه‌ها
   viewProg?: boolean;
   createProg?: boolean;
   decideProg?: boolean;
+  // مالی و تقویم
   viewFin?: boolean;
-  manageSettings?: boolean;
+  viewCalendar?: boolean;
+  // پیامک و قالب‌های مجاز
   manageSms?: boolean;
+  manageSmsTemplates?: boolean;
+  // کاربران و تنظیمات
+  manageUsers?: boolean;
+  manageSettings?: boolean;
+}
+
+export interface SmsTemplate {
+  id: number;
+  title: string;
+  body: string;
+  category: string;
+  isActive: boolean;
+  createdBy?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SmsConfig {

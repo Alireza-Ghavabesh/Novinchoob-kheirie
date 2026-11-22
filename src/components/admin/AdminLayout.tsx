@@ -24,6 +24,7 @@ import {
   AppConfig,
 } from '../../types';
 import { EntityDefinition } from '../../utils/publicFormConfig';
+import { hasPermission } from '../../utils/permissions';
 import { api } from '../../services/api';
 import { RequestsTab } from './RequestsTab';
 import { ProgramsTab } from './ProgramsTab';
@@ -67,33 +68,47 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   onConfigUpdated,
   onCurrentUserUpdated,
 }) => {
-  const isAdmin = currentUser.username === 'admin';
-  const canInbox = isAdmin || Boolean(currentUser.perms?.viewInbox);
-  const canProg = isAdmin || Boolean(currentUser.perms?.viewProg);
-  const canFin = isAdmin || Boolean(currentUser.perms?.viewFin);
-  const canUsers = isAdmin || Boolean(currentUser.perms?.manageSettings);
-  const canSettings = isAdmin || Boolean(currentUser.perms?.manageSettings);
+  const canInbox =
+    hasPermission(currentUser, 'viewInbox') || hasPermission(currentUser, 'decideInbox');
+  const canProg =
+    hasPermission(currentUser, 'viewProg') ||
+    hasPermission(currentUser, 'createProg') ||
+    hasPermission(currentUser, 'decideProg');
+  const canCalendar = hasPermission(currentUser, 'viewCalendar');
+  const canFin = hasPermission(currentUser, 'viewFin');
+  const canUsers = hasPermission(currentUser, 'manageUsers');
+  const canSms =
+    hasPermission(currentUser, 'manageSms') || hasPermission(currentUser, 'manageSmsTemplates');
+  const canForms =
+    hasPermission(currentUser, 'viewForms') || hasPermission(currentUser, 'manageForms');
+  const canSettings = hasPermission(currentUser, 'manageSettings');
 
   const isTabAllowed = useCallback(
     (tab: AdminTab) => {
       if (tab === 'inbox') return canInbox;
       if (tab === 'programs') return canProg;
+      if (tab === 'calendar') return canCalendar;
       if (tab === 'finance') return canFin;
       if (tab === 'users') return canUsers;
-      if (tab === 'sms' || tab === 'forms' || tab === 'settings') return canSettings;
-      return tab === 'calendar';
+      if (tab === 'sms') return canSms;
+      if (tab === 'forms') return canForms;
+      if (tab === 'settings') return canSettings;
+      return false;
     },
-    [canInbox, canProg, canFin, canUsers, canSettings]
+    [canInbox, canProg, canCalendar, canFin, canUsers, canSms, canForms, canSettings]
   );
 
   // Determine default tab based on user permissions
   const getInitialTab = useCallback((): AdminTab => {
     if (canInbox) return 'inbox';
+    if (canForms) return 'forms';
     if (canProg) return 'programs';
     if (canFin) return 'finance';
+    if (canSms) return 'sms';
+    if (canUsers) return 'users';
     if (canSettings) return 'settings';
     return 'calendar';
-  }, [canInbox, canProg, canFin, canSettings]);
+  }, [canInbox, canForms, canProg, canFin, canSms, canUsers, canSettings]);
 
   const [activeTab, setActiveTab] = useState<AdminTab>(() => getInitialTab());
   const [copiedPublicLink, setCopiedPublicLink] = useState(false);
@@ -233,17 +248,19 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </button>
           )}
 
-          <button
-            onClick={() => setActiveTab('calendar')}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
-              activeTab === 'calendar'
-                ? 'bg-emerald-600 text-white shadow'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Calendar className="w-4 h-4 text-emerald-400" />
-            <span>تقویم اجرایی</span>
-          </button>
+          {canCalendar && (
+            <button
+              onClick={() => setActiveTab('calendar')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
+                activeTab === 'calendar'
+                  ? 'bg-emerald-600 text-white shadow'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Calendar className="w-4 h-4 text-emerald-400" />
+              <span>تقویم اجرایی</span>
+            </button>
+          )}
 
           {canFin && (
             <button
@@ -273,7 +290,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </button>
           )}
 
-          {canSettings && (
+          {canSms && (
             <button
               onClick={() => setActiveTab('sms')}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
@@ -287,7 +304,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </button>
           )}
 
-          {canSettings && (
+          {canForms && (
             <button
               onClick={() => setActiveTab('forms')}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
@@ -339,7 +356,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           />
         )}
 
-        {activeTab === 'calendar' && (
+        {activeTab === 'calendar' && canCalendar && (
           <CalendarTab programs={programs} requests={requests} />
         )}
 
@@ -347,7 +364,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {activeTab === 'users' && canUsers && <UsersTab currentUser={currentUser} />}
 
-        {activeTab === 'sms' && canSettings && (
+        {activeTab === 'sms' && canSms && (
           <SmsTab
             currentUser={currentUser}
             appConfig={config}
@@ -356,8 +373,9 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           />
         )}
 
-        {activeTab === 'forms' && canSettings && (
+        {activeTab === 'forms' && canForms && (
           <FormsTab
+            currentUser={currentUser}
             config={config}
             needCategories={needCategories}
             entities={entities}
@@ -497,15 +515,17 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           </button>
         )}
 
-        <button
-          onClick={() => setActiveTab('calendar')}
-          className={`flex flex-col items-center gap-1 min-w-[44px] ${
-            activeTab === 'calendar' ? 'text-emerald-700 font-bold' : 'text-slate-500'
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          <span>تقویم</span>
-        </button>
+        {canCalendar && (
+          <button
+            onClick={() => setActiveTab('calendar')}
+            className={`flex flex-col items-center gap-1 min-w-[44px] ${
+              activeTab === 'calendar' ? 'text-emerald-700 font-bold' : 'text-slate-500'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            <span>تقویم</span>
+          </button>
+        )}
 
         {canFin && (
           <button
@@ -531,7 +551,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           </button>
         )}
 
-        {canSettings && (
+        {canSms && (
           <button
             onClick={() => setActiveTab('sms')}
             className={`flex flex-col items-center gap-1 min-w-[44px] ${
@@ -543,7 +563,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           </button>
         )}
 
-        {canSettings && (
+        {canForms && (
           <button
             onClick={() => setActiveTab('forms')}
             className={`flex flex-col items-center gap-1 min-w-[44px] ${
