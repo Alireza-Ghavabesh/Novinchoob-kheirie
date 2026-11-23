@@ -13,10 +13,13 @@ import {
   Sliders,
   ListChecks,
   UserCheck,
+  FileText,
+  Save,
 } from 'lucide-react';
 import { AppConfig } from '../../types';
 import { api } from '../../services/api';
 import {
+  BuiltinFieldsConfig,
   DEFAULT_GUARDIAN_OPTIONS,
   DEFAULT_HOUSING_OPTIONS,
   DEFAULT_PUBLIC_FORM_SCHEMA,
@@ -32,6 +35,176 @@ interface PublicFormBuilderSectionProps {
   onConfigUpdated: (config: AppConfig) => void;
   onOpenEntitiesTab?: () => void;
 }
+
+type ShowKey =
+  | 'showName'
+  | 'showNid'
+  | 'showPhone'
+  | 'showBirthDate'
+  | 'showGuardian'
+  | 'showDependents'
+  | 'showHousing'
+  | 'showCat'
+  | 'showRequestedAmount'
+  | 'showDesc'
+  | 'showAddress';
+
+type RequiredKey =
+  | 'requiredName'
+  | 'requiredNid'
+  | 'requiredPhone'
+  | 'requiredBirthDate'
+  | 'requiredGuardian'
+  | 'requiredDependents'
+  | 'requiredHousing'
+  | 'requiredCat'
+  | 'requiredRequestedAmount'
+  | 'requiredDesc'
+  | 'requiredAddress';
+
+type LabelKey =
+  | 'nameLabel'
+  | 'nidLabel'
+  | 'phoneLabel'
+  | 'birthDateLabel'
+  | 'guardianLabel'
+  | 'dependentsLabel'
+  | 'housingLabel'
+  | 'catLabel'
+  | 'requestedAmountLabel'
+  | 'descLabel'
+  | 'addressLabel';
+
+type PlaceholderKey =
+  | 'namePlaceholder'
+  | 'nidPlaceholder'
+  | 'phonePlaceholder'
+  | 'birthDatePlaceholder'
+  | 'dependentsPlaceholder'
+  | 'requestedAmountPlaceholder'
+  | 'descPlaceholder'
+  | 'addressPlaceholder';
+
+interface BuiltinFieldMeta {
+  id: string;
+  defaultTitle: string;
+  fieldTypeLabel: string;
+  showKey: ShowKey;
+  requiredKey: RequiredKey;
+  labelKey: LabelKey;
+  placeholderKey?: PlaceholderKey;
+  hint?: string;
+}
+
+const BUILTIN_FIELD_ITEMS: BuiltinFieldMeta[] = [
+  {
+    id: 'name',
+    defaultTitle: 'نام و نام خانوادگی متقاضی',
+    fieldTypeLabel: 'متن کوتاه',
+    showKey: 'showName',
+    requiredKey: 'requiredName',
+    labelKey: 'nameLabel',
+    placeholderKey: 'namePlaceholder',
+  },
+  {
+    id: 'nid',
+    defaultTitle: 'کد ملی ۱۰ رقمی',
+    fieldTypeLabel: 'کد ملی',
+    showKey: 'showNid',
+    requiredKey: 'requiredNid',
+    labelKey: 'nidLabel',
+    placeholderKey: 'nidPlaceholder',
+  },
+  {
+    id: 'phone',
+    defaultTitle: 'شماره تلفن همراه',
+    fieldTypeLabel: 'شماره موبایل',
+    showKey: 'showPhone',
+    requiredKey: 'requiredPhone',
+    labelKey: 'phoneLabel',
+    placeholderKey: 'phonePlaceholder',
+  },
+  {
+    id: 'birthDate',
+    defaultTitle: 'تاریخ تولد (شمسی)',
+    fieldTypeLabel: 'تقویم شمسی',
+    showKey: 'showBirthDate',
+    requiredKey: 'requiredBirthDate',
+    labelKey: 'birthDateLabel',
+    placeholderKey: 'birthDatePlaceholder',
+  },
+  {
+    id: 'guardian',
+    defaultTitle: 'وضعیت سرپرستی خانوار',
+    fieldTypeLabel: 'سلکت‌باکس',
+    showKey: 'showGuardian',
+    requiredKey: 'requiredGuardian',
+    labelKey: 'guardianLabel',
+    hint: 'گزینه‌های این فیلد از بخش مدیریت لیست‌های کشویی در پایین قابل ویرایش است.',
+  },
+  {
+    id: 'dependents',
+    defaultTitle: 'تعداد افراد تحت تکفل',
+    fieldTypeLabel: 'عددی',
+    showKey: 'showDependents',
+    requiredKey: 'requiredDependents',
+    labelKey: 'dependentsLabel',
+    placeholderKey: 'dependentsPlaceholder',
+  },
+  {
+    id: 'housing',
+    defaultTitle: 'وضعیت محل سکونت',
+    fieldTypeLabel: 'سلکت‌باکس',
+    showKey: 'showHousing',
+    requiredKey: 'requiredHousing',
+    labelKey: 'housingLabel',
+    hint: 'گزینه‌های این فیلد از بخش مدیریت لیست‌های کشویی در پایین قابل ویرایش است.',
+  },
+  {
+    id: 'cat',
+    defaultTitle: 'دسته‌بندی موضوع نیاز',
+    fieldTypeLabel: 'سلکت‌باکس',
+    showKey: 'showCat',
+    requiredKey: 'requiredCat',
+    labelKey: 'catLabel',
+    hint: 'گزینه‌های این فیلد از «تنظیمات ← دسته‌بندی‌های نیاز» خوانده می‌شوند.',
+  },
+  {
+    id: 'requestedAmount',
+    defaultTitle: 'مبلغ تخمینی مورد نیاز',
+    fieldTypeLabel: 'مبلغ (تومان)',
+    showKey: 'showRequestedAmount',
+    requiredKey: 'requiredRequestedAmount',
+    labelKey: 'requestedAmountLabel',
+    placeholderKey: 'requestedAmountPlaceholder',
+  },
+  {
+    id: 'desc',
+    defaultTitle: 'شرح تفصیلی مشکل',
+    fieldTypeLabel: 'متن بلند',
+    showKey: 'showDesc',
+    requiredKey: 'requiredDesc',
+    labelKey: 'descLabel',
+    placeholderKey: 'descPlaceholder',
+  },
+  {
+    id: 'address',
+    defaultTitle: 'آدرس دقیق محل سکونت',
+    fieldTypeLabel: 'متن کوتاه / نشانی',
+    showKey: 'showAddress',
+    requiredKey: 'requiredAddress',
+    labelKey: 'addressLabel',
+    placeholderKey: 'addressPlaceholder',
+  },
+];
+
+const THEME_OPTIONS = [
+  { id: 'emerald', label: 'سبز زمردی', swatch: 'bg-emerald-700' },
+  { id: 'teal', label: 'فیروزه‌ای', swatch: 'bg-teal-700' },
+  { id: 'blue', label: 'آبی لاجوردی', swatch: 'bg-blue-800' },
+  { id: 'amber', label: 'طلایی / کهربایی', swatch: 'bg-amber-600' },
+  { id: 'slate', label: 'ذغالی رسمی', swatch: 'bg-slate-800' },
+];
 
 export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> = ({
   config,
@@ -58,14 +231,19 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
 
   const persistSchema = async (
     nextSchema: PublicFormSchema,
-    successText = 'ساختار فرم درخواست عمومی با موفقیت ذخیره و اعمال شد.'
+    successText = 'تنظیمات و فیلدهای فرم درخواست عمومی با موفقیت ذخیره شد.'
   ) => {
     setSaving(true);
     setErrorMsg('');
     setSavedMsg('');
     try {
+      const cleanedSchema: PublicFormSchema = {
+        ...nextSchema,
+        guardianOptions: nextSchema.guardianOptions.map((o) => o.trim()).filter(Boolean),
+        housingOptions: nextSchema.housingOptions.map((o) => o.trim()).filter(Boolean),
+      };
       const updated = await api.updateConfig({
-        publicFormConfig: JSON.stringify(nextSchema),
+        publicFormConfig: JSON.stringify(cleanedSchema),
       });
       onConfigUpdated(updated);
       setSavedMsg(successText);
@@ -77,22 +255,15 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
     }
   };
 
-  // Toggle built-in field
-  const toggleBuiltinField = (
-    key:
-      | 'showBirthDate'
-      | 'showGuardian'
-      | 'showDependents'
-      | 'showHousing'
-      | 'showRequestedAmount'
-      | 'showDesc'
-      | 'showAddress'
+  const updateBuiltin = <K extends keyof BuiltinFieldsConfig>(
+    key: K,
+    value: BuiltinFieldsConfig[K]
   ) => {
     setSchema((prev) => ({
       ...prev,
       builtin: {
         ...prev.builtin,
-        [key]: !prev.builtin[key],
+        [key]: value,
       },
     }));
   };
@@ -113,6 +284,18 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
     }));
     if (target === 'guardianOptions') setNewGuardianOpt('');
     else setNewHousingOpt('');
+  };
+
+  const updateSelectOption = (
+    target: 'guardianOptions' | 'housingOptions',
+    idx: number,
+    nextValue: string
+  ) => {
+    setSchema((prev) => {
+      const list = [...prev[target]];
+      list[idx] = nextValue;
+      return { ...prev, [target]: list };
+    });
   };
 
   const removeSelectOption = (target: 'guardianOptions' | 'housingOptions', idx: number) => {
@@ -155,27 +338,6 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
     });
   };
 
-  const builtinToggleItems: Array<{
-    key:
-      | 'showBirthDate'
-      | 'showGuardian'
-      | 'showDependents'
-      | 'showHousing'
-      | 'showRequestedAmount'
-      | 'showDesc'
-      | 'showAddress';
-    title: string;
-    labelKey?: 'guardianLabel' | 'housingLabel' | 'descLabel' | 'addressLabel';
-  }> = [
-    { key: 'showBirthDate', title: 'تاریخ تولد (شمسی)' },
-    { key: 'showGuardian', title: 'سلکت‌باکس وضعیت سرپرستی خانوار', labelKey: 'guardianLabel' },
-    { key: 'showDependents', title: 'تعداد افراد تحت تکفل' },
-    { key: 'showHousing', title: 'سلکت‌باکس وضعیت محل سکونت', labelKey: 'housingLabel' },
-    { key: 'showRequestedAmount', title: 'مبلغ تخمینی مورد نیاز' },
-    { key: 'showDesc', title: 'شرح تفصیلی مشکل', labelKey: 'descLabel' },
-    { key: 'showAddress', title: 'آدرس دقیق محل سکونت', labelKey: 'addressLabel' },
-  ];
-
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
       {/* Header */}
@@ -184,10 +346,10 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
           <Sliders className="w-5 h-5 text-emerald-600" />
           <div>
             <h3 className="font-bold text-base text-slate-900">
-              شخصی‌سازی فیلدها و گزینه‌های فرم درخواست عمومی
+              طراحی و ویرایش کامل فرم درخواست عمومی
             </h3>
             <p className="text-xs text-slate-500">
-              فیلدهای متنی، عددی، سلکت‌باکس، موجودیتی (مثل افزودن چندتایی افراد تحت تکفل) و سلکت‌باکس از موجودیت‌ها را اضافه کنید یا فیلدهای پیش‌فرض را مخفی نمایید.
+              تمامی مشخصات فرم، عنوان‌ها، متن راهنما، الزامی/اختیاری بودن و نمایش یا مخفی‌سازی همه فیلدها و همچنین فیلدهای سفارشی در این بخش قابل ویرایش است.
             </p>
           </div>
         </div>
@@ -216,43 +378,291 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
         </div>
       )}
 
-      {/* 0. Beneficiary Portal Visibility Toggle */}
-      <label className="flex items-start sm:items-center justify-between gap-3 p-4 rounded-2xl bg-teal-50 border-2 border-teal-200 cursor-pointer hover:bg-teal-100/60 transition">
-        <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl bg-teal-600 text-white flex items-center justify-center shrink-0 mt-0.5">
-            <UserCheck className="w-5 h-5" />
+      {/* 1. General Form Settings (Matching Custom Forms Editor) */}
+      <div className="rounded-2xl border border-slate-200 p-4 sm:p-5 space-y-4">
+        <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+          <FileText className="w-4 h-4 text-emerald-600" />
+          <h4 className="font-bold text-xs sm:text-sm text-slate-900">
+            مشخصات و تنظیمات عمومی فرم
+          </h4>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">عنوان فرم</label>
+            <input
+              type="text"
+              value={schema.title}
+              onChange={(e) => setSchema((prev) => ({ ...prev, title: e.target.value }))}
+              placeholder="مثال: فرم عمومی پذیرش و نیازسنجی نیازمندان"
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+            />
           </div>
-          <div className="space-y-0.5">
-            <span className="block font-extrabold text-xs sm:text-sm text-teal-950">
-              نمایش و تکمیل/ویرایش فرم درخواست عمومی در پروفایل مددجو
-            </span>
-            <span className="block text-[11px] text-teal-800 leading-relaxed">
-              با فعال کردن این گزینه، مددجویانی که با شماره موبایل وارد پروفایل خود می‌شوند می‌توانند همین فرم درخواست عمومی را مستقیماً تکمیل، ویرایش و پیگیری کنند و پرونده آن‌ها وارد کارتابل اصلی متقاضیان می‌شود.
-            </span>
+
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">
+              عبارت بالای بنر (Hero Badge)
+            </label>
+            <input
+              type="text"
+              value={schema.heroBadge}
+              onChange={(e) => setSchema((prev) => ({ ...prev, heroBadge: e.target.value }))}
+              placeholder="بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="block font-semibold text-slate-700 mb-1">توضیحات فرم</label>
+            <textarea
+              rows={2}
+              value={schema.description}
+              onChange={(e) => setSchema((prev) => ({ ...prev, description: e.target.value }))}
+              placeholder="توضیحات راهنمای بالای فرم..."
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">متن دکمه ثبت</label>
+            <input
+              type="text"
+              value={schema.submitButtonText}
+              onChange={(e) =>
+                setSchema((prev) => ({ ...prev, submitButtonText: e.target.value }))
+              }
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">
+              پیام موفقیت پس از ثبت
+            </label>
+            <input
+              type="text"
+              value={schema.successMessage}
+              onChange={(e) => setSchema((prev) => ({ ...prev, successMessage: e.target.value }))}
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">
+              تم رنگی بنر صفحه مستقل فرم
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {THEME_OPTIONS.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setSchema((prev) => ({ ...prev, theme: t.id }))}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-semibold transition cursor-pointer ${
+                    (schema.theme || 'emerald') === t.id
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <span className={`w-3 h-3 rounded-full ${t.swatch}`} />
+                  <span>{t.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">
+              حداکثر حجم مجاز فایل آپلودی (مگابایت)
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={25}
+                value={schema.maxFileSizeMB || 5}
+                onChange={(e) =>
+                  setSchema((prev) => ({
+                    ...prev,
+                    maxFileSizeMB: Math.min(25, Math.max(1, Number(e.target.value) || 5)),
+                  }))
+                }
+                className="w-24 px-3 py-2 rounded-xl border border-slate-300 bg-white text-center font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <span className="text-slate-600 font-semibold">مگابایت</span>
+            </div>
           </div>
         </div>
-        <input
-          type="checkbox"
-          checked={Boolean(schema.showInBeneficiaryPortal)}
-          onChange={(e) =>
-            setSchema((prev) => ({
-              ...prev,
-              showInBeneficiaryPortal: e.target.checked,
-            }))
-          }
-          className="w-5 h-5 rounded text-teal-600 focus:ring-teal-500 shrink-0 mt-1 sm:mt-0"
-        />
-      </label>
 
-      {/* 1. Select Box Options Managers (Guardian & Housing) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100 text-xs">
+          <label className="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer hover:bg-slate-100/70 transition">
+            <div>
+              <span className="font-bold text-slate-800 block">
+                نمایش بخش پیگیری کد رهگیری در صفحه فرم
+              </span>
+              <span className="text-[11px] text-slate-500">
+                امکان استعلام وضعیت پرونده با کد رهگیری یا کد ملی
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={schema.showTracking}
+              onChange={(e) =>
+                setSchema((prev) => ({ ...prev, showTracking: e.target.checked }))
+              }
+              className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 shrink-0"
+            />
+          </label>
+
+          <label className="flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer hover:bg-slate-100/70 transition">
+            <div className="flex items-center gap-2">
+              <UserCheck className="w-4 h-4 text-teal-600 shrink-0" />
+              <div>
+                <span className="font-bold text-slate-800 block">
+                  نمایش در پروفایل مددجو
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  امکان تکمیل و ویرایش مستقیم در کارتابل مددجو
+                </span>
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={Boolean(schema.showInBeneficiaryPortal)}
+              onChange={(e) =>
+                setSchema((prev) => ({
+                  ...prev,
+                  showInBeneficiaryPortal: e.target.checked,
+                }))
+              }
+              className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 shrink-0"
+            />
+          </label>
+        </div>
+      </div>
+
+      {/* 2. All 11 Built-in Fields — Full Editability */}
+      <div className="rounded-2xl border border-slate-200 p-4 sm:p-5 space-y-4">
+        <div>
+          <h4 className="font-bold text-xs sm:text-sm text-slate-900">
+            ویرایش همه فیلدهای اصلی فرم ({BUILTIN_FIELD_ITEMS.length} فیلد قابل تنظیم)
+          </h4>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            برای هر فیلد می‌توانید عنوان نمایشی، متن راهنمای داخل کادر (Placeholder)، وضعیت اجباری یا اختیاری بودن و همچنین نمایش یا مخفی بودن آن را تغییر دهید.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 text-xs">
+          {BUILTIN_FIELD_ITEMS.map((item) => {
+            const isVisible = schema.builtin[item.showKey];
+            const isRequired = schema.builtin[item.requiredKey];
+
+            return (
+              <div
+                key={item.id}
+                className={`p-3.5 rounded-xl border transition space-y-2.5 ${
+                  isVisible
+                    ? 'bg-white border-slate-200 shadow-xs'
+                    : 'bg-slate-50 border-slate-200 opacity-70'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-bold text-slate-800 truncate">{item.defaultTitle}</span>
+                    <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-semibold shrink-0">
+                      {item.fieldTypeLabel}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {isVisible && (
+                      <button
+                        type="button"
+                        onClick={() => updateBuiltin(item.requiredKey, !isRequired)}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${
+                          isRequired
+                            ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                        title="تغییر وضعیت الزامی یا اختیاری بودن فیلد"
+                      >
+                        {isRequired ? 'الزامی *' : 'اختیاری'}
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => updateBuiltin(item.showKey, !isVisible)}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold text-[11px] transition cursor-pointer ${
+                        isVisible
+                          ? 'bg-slate-100 text-slate-700 hover:bg-rose-50 hover:text-rose-700'
+                          : 'bg-slate-200 text-slate-700 hover:bg-emerald-100 hover:text-emerald-800'
+                      }`}
+                    >
+                      {isVisible ? (
+                        <>
+                          <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>فعال</span>
+                        </>
+                      ) : (
+                        <>
+                          <EyeOff className="w-3.5 h-3.5" />
+                          <span>مخفی</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {isVisible && (
+                  <div className="space-y-2 pt-1 border-t border-slate-100">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">
+                        عنوان فیلد در فرم
+                      </label>
+                      <input
+                        type="text"
+                        value={schema.builtin[item.labelKey]}
+                        onChange={(e) => updateBuiltin(item.labelKey, e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                        placeholder="عنوان نمایشی فیلد"
+                      />
+                    </div>
+
+                    {item.placeholderKey && (
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-500 mb-1">
+                          متن راهنمای داخل کادر (Placeholder)
+                        </label>
+                        <input
+                          type="text"
+                          value={schema.builtin[item.placeholderKey]}
+                          onChange={(e) => updateBuiltin(item.placeholderKey!, e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                          placeholder="متن نمونه داخل ورودی..."
+                        />
+                      </div>
+                    )}
+
+                    {item.hint && (
+                      <p className="text-[10px] text-slate-500 leading-relaxed">{item.hint}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 3. Select Box Options Managers (Guardian & Housing) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Guardian Select Options */}
         <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
           <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
             <div className="flex items-center gap-2">
               <ListChecks className="w-4 h-4 text-emerald-600" />
               <h4 className="font-bold text-xs sm:text-sm text-slate-800">
-                گزینه‌های سلکت‌باکس «{schema.builtin.guardianLabel}»
+                گزینه‌های «{schema.builtin.guardianLabel}»
               </h4>
             </div>
             <button
@@ -294,19 +704,24 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
             </button>
           </div>
 
-          <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
+          <div className="space-y-1.5 max-h-60 overflow-y-auto pr-0.5">
             {schema.guardianOptions.map((opt, idx) => (
               <div
-                key={`${opt}-${idx}`}
-                className="flex items-center justify-between gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 text-xs"
+                key={idx}
+                className="flex items-center justify-between gap-2 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs"
               >
-                <span className="font-medium text-slate-800 truncate">{opt}</span>
+                <input
+                  type="text"
+                  value={opt}
+                  onChange={(e) => updateSelectOption('guardianOptions', idx, e.target.value)}
+                  className="flex-1 px-2 py-1 rounded-lg border border-transparent hover:border-slate-200 focus:border-emerald-400 outline-none text-slate-800 font-medium text-xs"
+                />
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
                     disabled={idx === 0}
                     onClick={() => moveSelectOption('guardianOptions', idx, -1)}
-                    className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                    className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 cursor-pointer"
                     title="انتقال به بالا"
                   >
                     <ArrowUp className="w-3.5 h-3.5" />
@@ -315,7 +730,7 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
                     type="button"
                     disabled={idx === schema.guardianOptions.length - 1}
                     onClick={() => moveSelectOption('guardianOptions', idx, 1)}
-                    className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                    className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 cursor-pointer"
                     title="انتقال به پایین"
                   >
                     <ArrowDown className="w-3.5 h-3.5" />
@@ -323,7 +738,7 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
                   <button
                     type="button"
                     onClick={() => removeSelectOption('guardianOptions', idx)}
-                    className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition"
+                    className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
                     title="حذف گزینه"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -340,7 +755,7 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
             <div className="flex items-center gap-2">
               <ListChecks className="w-4 h-4 text-teal-600" />
               <h4 className="font-bold text-xs sm:text-sm text-slate-800">
-                گزینه‌های سلکت‌باکس «{schema.builtin.housingLabel}»
+                گزینه‌های «{schema.builtin.housingLabel}»
               </h4>
             </div>
             <button
@@ -382,19 +797,24 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
             </button>
           </div>
 
-          <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
+          <div className="space-y-1.5 max-h-60 overflow-y-auto pr-0.5">
             {schema.housingOptions.map((opt, idx) => (
               <div
-                key={`${opt}-${idx}`}
-                className="flex items-center justify-between gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 text-xs"
+                key={idx}
+                className="flex items-center justify-between gap-2 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs"
               >
-                <span className="font-medium text-slate-800 truncate">{opt}</span>
+                <input
+                  type="text"
+                  value={opt}
+                  onChange={(e) => updateSelectOption('housingOptions', idx, e.target.value)}
+                  className="flex-1 px-2 py-1 rounded-lg border border-transparent hover:border-slate-200 focus:border-teal-400 outline-none text-slate-800 font-medium text-xs"
+                />
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
                     disabled={idx === 0}
                     onClick={() => moveSelectOption('housingOptions', idx, -1)}
-                    className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                    className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 cursor-pointer"
                     title="انتقال به بالا"
                   >
                     <ArrowUp className="w-3.5 h-3.5" />
@@ -403,7 +823,7 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
                     type="button"
                     disabled={idx === schema.housingOptions.length - 1}
                     onClick={() => moveSelectOption('housingOptions', idx, 1)}
-                    className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                    className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 cursor-pointer"
                     title="انتقال به پایین"
                   >
                     <ArrowDown className="w-3.5 h-3.5" />
@@ -411,7 +831,7 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
                   <button
                     type="button"
                     onClick={() => removeSelectOption('housingOptions', idx)}
-                    className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition"
+                    className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
                     title="حذف گزینه"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -423,88 +843,17 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
         </div>
       </div>
 
-      {/* 2. Built-in Fields Visibility & Labels */}
-      <div className="rounded-2xl border border-slate-200 p-4 sm:p-5 space-y-3">
-        <div>
-          <h4 className="font-bold text-xs sm:text-sm text-slate-900">
-            مدیریت نمایش / حذف و عنوان فیلدهای پیش‌فرض فرم عمومی
-          </h4>
-          <p className="text-[11px] text-slate-500 mt-0.5">
-            مثلاً می‌توانید «تعداد افراد تحت تکفل» را حذف (مخفی) کرده و در بخش پایین یک فیلد موجودیتی «افراد تحت تکفل» به جای آن اضافه نمایید.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-          {builtinToggleItems.map((item) => {
-            const isVisible = schema.builtin[item.key];
-            return (
-              <div
-                key={item.key}
-                className={`p-3 rounded-xl border transition space-y-2 ${
-                  isVisible
-                    ? 'bg-emerald-50/40 border-emerald-200'
-                    : 'bg-slate-50 border-slate-200 opacity-75'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-bold text-slate-800">{item.title}</span>
-                  <button
-                    type="button"
-                    onClick={() => toggleBuiltinField(item.key)}
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold text-[11px] transition cursor-pointer ${
-                      isVisible
-                        ? 'bg-emerald-100 text-emerald-800 hover:bg-rose-100 hover:text-rose-700'
-                        : 'bg-slate-200 text-slate-700 hover:bg-emerald-100 hover:text-emerald-800'
-                    }`}
-                  >
-                    {isVisible ? (
-                      <>
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>فعال در فرم</span>
-                      </>
-                    ) : (
-                      <>
-                        <EyeOff className="w-3.5 h-3.5" />
-                        <span>حذف‌شده (بازیابی)</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                {item.labelKey && isVisible && (
-                  <input
-                    type="text"
-                    value={schema.builtin[item.labelKey]}
-                    onChange={(e) =>
-                      setSchema((prev) => ({
-                        ...prev,
-                        builtin: {
-                          ...prev.builtin,
-                          [item.labelKey!]: e.target.value,
-                        },
-                      }))
-                    }
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-[11px] outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="عنوان نمایشی فیلد در فرم"
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 3. Custom & Entity Fields Builder */}
+      {/* 4. Custom & Entity Fields Builder */}
       <div className="rounded-2xl border border-slate-200 p-4 sm:p-5 space-y-4 bg-slate-50/40">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
           <div className="flex items-center gap-2">
             <ListPlus className="w-4 h-4 text-emerald-600 shrink-0" />
             <div>
               <h4 className="font-bold text-xs sm:text-sm text-slate-900">
-                افزودن فیلدهای سفارشی، موجودیتی و سلکت‌باکس به فرم درخواست عمومی
+                فیلدهای سفارشی، موجودیتی و سلکت‌باکس اضافه‌شده به فرم
               </h4>
               <p className="text-[11px] text-slate-500">
-                علاوه بر فیلدهای متنی/عددی/سلکت‌باکس، می‌توانید «فیلد موجودیتی» (مثل افراد تحت تکفل با جنسیت، سن و تحصیلات) یا «سلکت‌باکس از موجودیت‌ها» اضافه کنید.
+                علاوه بر فیلدهای اصلی بالا، می‌توانید هر تعداد فیلد متنی، عددی، تاریخ شمسی، سلکت‌باکس، آپلود فایل یا موجودیتی به این فرم اضافه و ویرایش کنید.
               </p>
             </div>
           </div>
@@ -513,38 +862,11 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
             <button
               type="button"
               onClick={onOpenEntitiesTab}
-              className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold transition cursor-pointer shrink-0"
+              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-[11px] font-bold transition cursor-pointer shrink-0"
             >
-              مدیریت و تعریف موجودیت‌ها در فرم‌ساز
+              مدیریت و تعریف موجودیت‌ها
             </button>
           )}
-        </div>
-
-        <div className="p-3 rounded-xl bg-white border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-          <div>
-            <span className="font-bold text-slate-800 block">
-              حداکثر حجم مجاز فایل آپلودی در فرم عمومی (مگابایت)
-            </span>
-            <span className="text-[11px] text-slate-500">
-              در صورت افزودن فیلد «آپلود فایل / مدرک» به فرم عمومی، سقف حجم هر فایل با این مقدار کنترل می‌شود.
-            </span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <input
-              type="number"
-              min={1}
-              max={25}
-              value={schema.maxFileSizeMB || 5}
-              onChange={(e) =>
-                setSchema((prev) => ({
-                  ...prev,
-                  maxFileSizeMB: Math.min(25, Math.max(1, Number(e.target.value) || 5)),
-                }))
-              }
-              className="w-20 px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-center font-bold outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            <span className="text-slate-600 font-semibold">مگابایت</span>
-          </div>
         </div>
 
         <FormFieldsEditor
@@ -554,22 +876,23 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
             setSchema((prev) => ({ ...prev, customFields: nextFields }))
           }
           onNavigateToEntities={onOpenEntitiesTab}
-          emptyText="هنوز فیلد سفارشی اضافه نشده است. از بخش بالا می‌توانید فیلدهای متنی، عددی، سلکت‌باکس، آپلود فایل یا موجودیتی به فرم عمومی اضافه کنید."
+          emptyText="هنوز فیلد سفارشی اضافه نشده است. از بخش بالا می‌توانید فیلدهای متنی، عددی، تاریخ شمسی، سلکت‌باکس، آپلود فایل یا موجودیتی به فرم اضافه کنید."
         />
       </div>
 
       {/* Save Button */}
       <div className="flex items-center justify-between pt-2 border-t border-slate-100">
         <span className="text-[11px] text-slate-500">
-          پس از تغییر فیلدها یا گزینه‌ها، برای اعمال در فرم عمومی حتماً دکمه ذخیره را بزنید.
+          پس از تغییر مشخصات یا فیلدها، برای اعمال در فرم حتماً دکمه ذخیره را بزنید.
         </span>
         <button
           type="button"
           disabled={saving}
           onClick={() => persistSchema(schema)}
-          className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition disabled:opacity-50 cursor-pointer"
+          className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition disabled:opacity-50 cursor-pointer"
         >
-          {saving ? 'در حال ذخیره...' : 'ذخیره تنظیمات فرم درخواست عمومی'}
+          <Save className="w-4 h-4" />
+          <span>{saving ? 'در حال ذخیره...' : 'ذخیره تنظیمات فرم درخواست عمومی'}</span>
         </button>
       </div>
     </div>

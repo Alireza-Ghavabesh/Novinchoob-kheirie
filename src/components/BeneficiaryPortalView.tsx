@@ -14,7 +14,6 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
-  FileText,
   Bell,
   BellRing,
   CheckCheck,
@@ -47,10 +46,10 @@ import {
   formatToman,
   isValidIranianNID,
   numberToPersianWords,
-  SHAMSI_MONTHS,
   toEnglishDigits,
   toPersianDigits,
 } from '../utils/persian';
+import { ShamsiDatePicker } from './ShamsiDatePicker';
 
 interface BeneficiaryPortalViewProps {
   beneficiary: BeneficiaryAccount;
@@ -132,9 +131,7 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
   const [pubName, setPubName] = useState(beneficiary.fullName || '');
   const [pubNid, setPubNid] = useState('');
   const [pubPhone, setPubPhone] = useState(beneficiary.phone || '');
-  const [pubBirthYear, setPubBirthYear] = useState('1365');
-  const [pubBirthMonth, setPubBirthMonth] = useState('01');
-  const [pubBirthDay, setPubBirthDay] = useState('15');
+  const [pubBirthDate, setPubBirthDate] = useState('');
   const [pubGuardian, setPubGuardian] = useState(
     publicFormSchema.guardianOptions[0] || 'زن سرپرست خانوار'
   );
@@ -172,15 +169,10 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
   const hydratePublicForm = useCallback(
     (req: BeneficiaryRequest | null, acc: BeneficiaryAccount) => {
       if (req) {
-        setPubName(req.name || acc.fullName || '');
-        setPubNid(req.nid || '');
-        setPubPhone(req.phone || acc.phone || '');
-        if (req.birthDate && req.birthDate.includes('/')) {
-          const parts = req.birthDate.split('/');
-          if (parts[0]) setPubBirthYear(toEnglishDigits(parts[0]));
-          if (parts[1]) setPubBirthMonth(toEnglishDigits(parts[1]).padStart(2, '0'));
-          if (parts[2]) setPubBirthDay(toEnglishDigits(parts[2]).padStart(2, '0'));
-        }
+        setPubName(req.name && req.name !== '-' ? req.name : acc.fullName || '');
+        setPubNid(req.nid && req.nid !== '-' ? req.nid : '');
+        setPubPhone(req.phone && req.phone !== '-' ? req.phone : acc.phone || '');
+        setPubBirthDate(req.birthDate || '');
         setPubGuardian(
           req.guardian && req.guardian !== '-'
             ? req.guardian
@@ -343,7 +335,20 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
     }
   };
 
-  const handleNotificationClick = async (notif: BeneficiaryNotification) => {
+  const handleNotificationClick = (notif: BeneficiaryNotification) => {
+    if (!notif.isRead) {
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notif.id ? { ...n, isRead: true } : n))
+      );
+      api.markBeneficiaryNotificationRead(notif.id).catch(() => undefined);
+    }
+  };
+
+  const handleOpenNotificationForm = (
+    e: React.MouseEvent,
+    notif: BeneficiaryNotification
+  ) => {
+    e.stopPropagation();
     if (!notif.isRead) {
       setNotifications((prev) =>
         prev.map((n) => (n.id === notif.id ? { ...n, isRead: true } : n))
@@ -355,6 +360,27 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
       scrollToPublicForm();
     } else if (notif.formId) {
       scrollToForm(notif.formId);
+    }
+  };
+
+  const handleDeleteNotification = async (
+    e: React.MouseEvent,
+    notifId: number
+  ) => {
+    e.stopPropagation();
+    setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+    try {
+      await api.deleteBeneficiaryNotification(notifId);
+    } catch {
+      // Reload on failure so state stays consistent
+      api
+        .getBeneficiaryNotifications()
+        .then((res) => {
+          if (Array.isArray(res.notifications)) {
+            setNotifications(res.notifications);
+          }
+        })
+        .catch(() => undefined);
     }
   };
 
@@ -372,24 +398,57 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
     setPubError('');
     setPubSuccess('');
 
-    if (!pubName.trim()) {
-      setPubError('لطفاً نام و نام خانوادگی را وارد نمایید.');
+    const b = publicFormSchema.builtin;
+
+    if (b.showName && b.requiredName && !pubName.trim()) {
+      setPubError(`لطفاً «${b.nameLabel}» را وارد نمایید.`);
       return;
     }
 
     const cleanNid = toEnglishDigits(pubNid.trim());
-    if (!cleanNid || cleanNid.length !== 10) {
-      setPubError('کد ملی باید دقیقاً ۱۰ رقم باشد.');
+    if (b.showNid && b.requiredNid && !cleanNid) {
+      setPubError(`لطفاً «${b.nidLabel}» را وارد نمایید.`);
       return;
     }
-    if (!isValidIranianNID(cleanNid)) {
-      setPubError('کد ملی وارد شده با الگوریتم استاندارد کشوری مطابقت ندارد.');
+    if (b.showNid && cleanNid) {
+      if (cleanNid.length !== 10) {
+        setPubError('کد ملی باید دقیقاً ۱۰ رقم باشد.');
+        return;
+      }
+      if (!isValidIranianNID(cleanNid)) {
+        setPubError('کد ملی وارد شده با الگوریتم استاندارد کشوری مطابقت ندارد.');
+        return;
+      }
+    }
+
+    const cleanPhone = toEnglishDigits((pubPhone || (b.showPhone ? '' : account.phone || '')).trim());
+    if (b.showPhone && b.requiredPhone && (!cleanPhone || cleanPhone.length < 10)) {
+      setPubError('شماره تلفن همراه معتبر نمی‌باشد.');
+      return;
+    }
+    if (b.showPhone && cleanPhone && cleanPhone.length < 10) {
+      setPubError('شماره تلفن همراه معتبر نمی‌باشد.');
       return;
     }
 
-    const cleanPhone = toEnglishDigits((pubPhone || account.phone || '').trim());
-    if (!cleanPhone || cleanPhone.length < 10) {
-      setPubError('شماره تلفن همراه معتبر نمی‌باشد.');
+    if (b.showBirthDate && b.requiredBirthDate && !pubBirthDate.trim()) {
+      setPubError(`لطفاً «${b.birthDateLabel}» را انتخاب نمایید.`);
+      return;
+    }
+    if (b.showCat && b.requiredCat && !pubCat.trim()) {
+      setPubError(`لطفاً «${b.catLabel}» را انتخاب نمایید.`);
+      return;
+    }
+    if (b.showRequestedAmount && b.requiredRequestedAmount && (!pubRequestedAmount || Number(pubRequestedAmount) <= 0)) {
+      setPubError(`لطفاً «${b.requestedAmountLabel}» را وارد نمایید.`);
+      return;
+    }
+    if (b.showDesc && b.requiredDesc && !pubDesc.trim()) {
+      setPubError(`لطفاً «${b.descLabel}» را وارد نمایید.`);
+      return;
+    }
+    if (b.showAddress && b.requiredAddress && !pubAddress.trim()) {
+      setPubError(`لطفاً «${b.addressLabel}» را وارد نمایید.`);
       return;
     }
 
@@ -403,30 +462,26 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
       return;
     }
 
-    const selectedCat =
-      pubCat || needCategories[0]?.name || 'درمان و هزینه‌های پزشکی و جراحی';
-    const birthDate = publicFormSchema.builtin.showBirthDate
-      ? `${pubBirthYear}/${pubBirthMonth.padStart(2, '0')}/${pubBirthDay.padStart(2, '0')}`
-      : '';
+    const selectedCat = b.showCat
+      ? pubCat || needCategories[0]?.name || 'درمان و هزینه‌های پزشکی و جراحی'
+      : '-';
 
     const isEdit = Boolean(publicRequest);
     setPubSubmitting(true);
     try {
       const saved = await api.submitBeneficiaryPublicRequest(
         {
-          name: pubName.trim(),
-          nid: cleanNid,
-          phone: cleanPhone,
-          birthDate,
-          guardian: publicFormSchema.builtin.showGuardian ? pubGuardian : '-',
-          dependents: publicFormSchema.builtin.showDependents ? Number(pubDependents) || 0 : 0,
-          housing: publicFormSchema.builtin.showHousing ? pubHousing : '-',
+          name: b.showName ? pubName.trim() : (account.fullName || '-'),
+          nid: b.showNid ? cleanNid : '',
+          phone: b.showPhone ? cleanPhone : (account.phone || ''),
+          birthDate: b.showBirthDate ? pubBirthDate.trim() : '',
+          guardian: b.showGuardian ? pubGuardian : '-',
+          dependents: b.showDependents ? Number(pubDependents) || 0 : 0,
+          housing: b.showHousing ? pubHousing : '-',
           cat: selectedCat,
-          requestedAmount: publicFormSchema.builtin.showRequestedAmount
-            ? Number(pubRequestedAmount) || 0
-            : 0,
-          desc: publicFormSchema.builtin.showDesc ? pubDesc.trim() : '',
-          address: publicFormSchema.builtin.showAddress ? pubAddress.trim() : '',
+          requestedAmount: b.showRequestedAmount ? Number(pubRequestedAmount) || 0 : 0,
+          desc: b.showDesc ? pubDesc.trim() : '',
+          address: b.showAddress ? pubAddress.trim() : '',
           customFields: extracted.values,
         },
         isEdit
@@ -679,27 +734,54 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                       <div
                         key={notif.id}
                         onClick={() => handleNotificationClick(notif)}
-                        className={`p-3.5 cursor-pointer transition space-y-1.5 ${
+                        className={`relative p-3.5 pr-10 cursor-pointer transition-all space-y-1.5 ${
                           !notif.isRead
-                            ? 'bg-amber-50/60 hover:bg-amber-50'
-                            : 'bg-white hover:bg-slate-50'
+                            ? 'bg-amber-50/75 hover:bg-amber-50'
+                            : 'bg-slate-50/60 opacity-55 hover:opacity-80'
                         }`}
                       >
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteNotification(e, notif.id)}
+                          title="حذف اعلان"
+                          aria-label="حذف اعلان"
+                          className="absolute top-3 right-2.5 w-5 h-5 rounded-full bg-slate-100/90 hover:bg-rose-100 text-slate-400 hover:text-rose-600 border border-slate-200/80 hover:border-rose-200 flex items-center justify-center transition cursor-pointer shadow-xs"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-center gap-1.5 min-w-0">
                             {!notif.isRead && (
                               <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
                             )}
-                            <span className="font-extrabold text-xs text-slate-900 truncate">
+                            <span
+                              className={`text-xs truncate ${
+                                !notif.isRead
+                                  ? 'font-extrabold text-slate-900'
+                                  : 'font-semibold text-slate-500'
+                              }`}
+                            >
                               {notif.title}
                             </span>
                           </div>
-                          <span className="text-[10px] text-slate-400 shrink-0">
-                            {new Date(notif.createdAt).toLocaleDateString('fa-IR')}
-                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {notif.isRead && (
+                              <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-slate-200/70 text-slate-500">
+                                خوانده‌شده
+                              </span>
+                            )}
+                            <span className="text-[10px] text-slate-400">
+                              {new Date(notif.createdAt).toLocaleDateString('fa-IR')}
+                            </span>
+                          </div>
                         </div>
 
-                        <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
+                        <p
+                          className={`text-xs leading-relaxed whitespace-pre-wrap ${
+                            !notif.isRead ? 'text-slate-800' : 'text-slate-500'
+                          }`}
+                        >
                           {notif.message}
                         </p>
 
@@ -729,6 +811,15 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                                 <Smartphone className="w-2.5 h-2.5" />
                                 پوش
                               </span>
+                            )}
+                            {notif.formId && (
+                              <button
+                                type="button"
+                                onClick={(e) => handleOpenNotificationForm(e, notif)}
+                                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-bold transition cursor-pointer"
+                              >
+                                مشاهده فرم
+                              </button>
                             )}
                           </div>
                         </div>
@@ -914,19 +1005,19 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Pinned Public Request Form inside Beneficiary Portal (when enabled by admin) */}
+          {/* Public Request Form inside Beneficiary Portal — Same neutral card style as custom forms */}
           {publicFormEnabled && (
             <div
               id="portal-public-request-form"
-              className="bg-white rounded-2xl border-2 border-emerald-200 shadow-sm overflow-hidden"
+              className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
             >
               <div
                 onClick={() => setPublicExpanded((prev) => !prev)}
-                className="p-5 sm:p-6 bg-emerald-50/70 border-b border-emerald-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-emerald-50 transition"
+                className="p-5 sm:p-6 bg-slate-50/80 border-b border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 transition"
               >
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <FileText className="w-5 h-5 text-emerald-700 shrink-0" />
+                    <ClipboardList className="w-5 h-5 text-emerald-600 shrink-0" />
                     <h3 className="font-extrabold text-base text-slate-900">
                       {publicFormSchema.title}
                     </h3>
@@ -956,7 +1047,7 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                     )}
                   </div>
                   {publicFormSchema.description && (
-                    <p className="text-xs text-slate-600 leading-relaxed">
+                    <p className="text-xs text-slate-500 leading-relaxed">
                       {publicFormSchema.description}
                     </p>
                   )}
@@ -970,7 +1061,7 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                         e.stopPropagation();
                         copyTracking(publicRequest.trackingCode);
                       }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-emerald-200 text-slate-700 font-mono text-[11px] font-bold hover:bg-emerald-50"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 font-mono text-[11px] font-bold hover:bg-slate-100"
                       title="کپی کد رهگیری"
                     >
                       <Copy className="w-3 h-3 text-emerald-600" />
@@ -981,7 +1072,7 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                       </span>
                     </button>
                   )}
-                  <span className="p-1.5 rounded-lg bg-white border border-emerald-200 text-slate-500">
+                  <span className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-500">
                     {publicExpanded ? (
                       <ChevronUp className="w-4 h-4" />
                     ) : (
@@ -1020,101 +1111,102 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                   )}
 
                   <form onSubmit={handlePublicRequestSubmit} className="space-y-5">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                          نام و نام خانوادگی متقاضی <span className="text-rose-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="مثال: فاطمه حسینی"
-                          value={pubName}
-                          onChange={(e) => setPubName(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm outline-none transition"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                          کد ملی ۱۰ رقمی (بدون خط تیره) <span className="text-rose-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          maxLength={10}
-                          placeholder="مثال: 0081239874"
-                          value={pubNid}
-                          onChange={(e) => setPubNid(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm outline-none transition font-mono"
-                        />
-                      </div>
-                    </div>
-
-                    <div
-                      className={`grid grid-cols-1 ${
-                        publicFormSchema.builtin.showBirthDate ? 'sm:grid-cols-2' : ''
-                      } gap-4`}
-                    >
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                          شماره تلفن همراه <span className="text-rose-500">*</span>
-                        </label>
-                        <input
-                          type="tel"
-                          required
-                          placeholder="09123334455"
-                          value={pubPhone}
-                          onChange={(e) => setPubPhone(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm outline-none transition font-mono dir-ltr text-right"
-                        />
-                      </div>
-
-                      {publicFormSchema.builtin.showBirthDate && (
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                            تاریخ تولد (شمسی)
-                          </label>
-                          <div className="grid grid-cols-3 gap-2">
-                            <select
-                              value={pubBirthYear}
-                              onChange={(e) => setPubBirthYear(e.target.value)}
-                              className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                            >
-                              {Array.from({ length: 70 }, (_, i) => 1340 + i).map((y) => (
-                                <option key={y} value={y}>
-                                  {toPersianDigits(y)}
-                                </option>
-                              ))}
-                            </select>
-
-                            <select
-                              value={pubBirthMonth}
-                              onChange={(e) => setPubBirthMonth(e.target.value)}
-                              className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                            >
-                              {SHAMSI_MONTHS.map((m, idx) => (
-                                <option key={m} value={String(idx + 1).padStart(2, '0')}>
-                                  {m}
-                                </option>
-                              ))}
-                            </select>
-
-                            <select
-                              value={pubBirthDay}
-                              onChange={(e) => setPubBirthDay(e.target.value)}
-                              className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                            >
-                              {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
-                                <option key={d} value={String(d).padStart(2, '0')}>
-                                  {toPersianDigits(d)}
-                                </option>
-                              ))}
-                            </select>
+                    {(publicFormSchema.builtin.showName || publicFormSchema.builtin.showNid) && (
+                      <div
+                        className={`grid grid-cols-1 ${
+                          publicFormSchema.builtin.showName && publicFormSchema.builtin.showNid
+                            ? 'sm:grid-cols-2'
+                            : ''
+                        } gap-4`}
+                      >
+                        {publicFormSchema.builtin.showName && (
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                              {publicFormSchema.builtin.nameLabel}{' '}
+                              {publicFormSchema.builtin.requiredName && (
+                                <span className="text-rose-500">*</span>
+                              )}
+                            </label>
+                            <input
+                              type="text"
+                              required={publicFormSchema.builtin.requiredName}
+                              placeholder={publicFormSchema.builtin.namePlaceholder}
+                              value={pubName}
+                              onChange={(e) => setPubName(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm outline-none transition"
+                            />
                           </div>
-                        </div>
-                      )}
-                    </div>
+                        )}
+
+                        {publicFormSchema.builtin.showNid && (
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                              {publicFormSchema.builtin.nidLabel}{' '}
+                              {publicFormSchema.builtin.requiredNid && (
+                                <span className="text-rose-500">*</span>
+                              )}
+                            </label>
+                            <input
+                              type="text"
+                              required={publicFormSchema.builtin.requiredNid}
+                              maxLength={10}
+                              placeholder={publicFormSchema.builtin.nidPlaceholder}
+                              value={pubNid}
+                              onChange={(e) => setPubNid(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm outline-none transition font-mono"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {(publicFormSchema.builtin.showPhone ||
+                      publicFormSchema.builtin.showBirthDate) && (
+                      <div
+                        className={`grid grid-cols-1 ${
+                          publicFormSchema.builtin.showPhone &&
+                          publicFormSchema.builtin.showBirthDate
+                            ? 'sm:grid-cols-2'
+                            : ''
+                        } gap-4`}
+                      >
+                        {publicFormSchema.builtin.showPhone && (
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                              {publicFormSchema.builtin.phoneLabel}{' '}
+                              {publicFormSchema.builtin.requiredPhone && (
+                                <span className="text-rose-500">*</span>
+                              )}
+                            </label>
+                            <input
+                              type="tel"
+                              required={publicFormSchema.builtin.requiredPhone}
+                              placeholder={publicFormSchema.builtin.phonePlaceholder}
+                              value={pubPhone}
+                              onChange={(e) => setPubPhone(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm outline-none transition font-mono dir-ltr text-right"
+                            />
+                          </div>
+                        )}
+
+                        {publicFormSchema.builtin.showBirthDate && (
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                              {publicFormSchema.builtin.birthDateLabel}{' '}
+                              {publicFormSchema.builtin.requiredBirthDate && (
+                                <span className="text-rose-500">*</span>
+                              )}
+                            </label>
+                            <ShamsiDatePicker
+                              value={pubBirthDate}
+                              onChange={setPubBirthDate}
+                              placeholder={publicFormSchema.builtin.birthDatePlaceholder}
+                              required={publicFormSchema.builtin.requiredBirthDate}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {(publicFormSchema.builtin.showGuardian ||
                       publicFormSchema.builtin.showDependents ||
@@ -1123,9 +1215,13 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                         {publicFormSchema.builtin.showGuardian && (
                           <div>
                             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                              {publicFormSchema.builtin.guardianLabel}
+                              {publicFormSchema.builtin.guardianLabel}{' '}
+                              {publicFormSchema.builtin.requiredGuardian && (
+                                <span className="text-rose-500">*</span>
+                              )}
                             </label>
                             <select
+                              required={publicFormSchema.builtin.requiredGuardian}
                               value={pubGuardian}
                               onChange={(e) => setPubGuardian(e.target.value)}
                               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -1142,13 +1238,18 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                         {publicFormSchema.builtin.showDependents && (
                           <div>
                             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                              تعداد افراد تحت تکفل
+                              {publicFormSchema.builtin.dependentsLabel}{' '}
+                              {publicFormSchema.builtin.requiredDependents && (
+                                <span className="text-rose-500">*</span>
+                              )}
                             </label>
                             <div className="flex items-center">
                               <input
                                 type="number"
                                 min={0}
                                 max={15}
+                                required={publicFormSchema.builtin.requiredDependents}
+                                placeholder={publicFormSchema.builtin.dependentsPlaceholder}
                                 value={pubDependents}
                                 onChange={(e) =>
                                   setPubDependents(Math.max(0, parseInt(e.target.value) || 0))
@@ -1163,9 +1264,13 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                         {publicFormSchema.builtin.showHousing && (
                           <div>
                             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                              {publicFormSchema.builtin.housingLabel}
+                              {publicFormSchema.builtin.housingLabel}{' '}
+                              {publicFormSchema.builtin.requiredHousing && (
+                                <span className="text-rose-500">*</span>
+                              )}
                             </label>
                             <select
+                              required={publicFormSchema.builtin.requiredHousing}
                               value={pubHousing}
                               onChange={(e) => setPubHousing(e.target.value)}
                               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -1181,59 +1286,75 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                       </div>
                     )}
 
-                    <div
-                      className={`grid grid-cols-1 ${
-                        publicFormSchema.builtin.showRequestedAmount ? 'sm:grid-cols-2' : ''
-                      } gap-4`}
-                    >
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                          {publicFormSchema.builtin.catLabel} <span className="text-rose-500">*</span>
-                        </label>
-                        <select
-                          value={pubCat}
-                          onChange={(e) => setPubCat(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
-                        >
-                          {needCategories.length > 0 ? (
-                            needCategories.map((c) => (
-                              <option key={c.id} value={c.name}>
-                                {c.name}
-                              </option>
-                            ))
-                          ) : (
-                            <option value="درمان و هزینه‌های پزشکی و جراحی">
-                              درمان و هزینه‌های پزشکی و جراحی
-                            </option>
-                          )}
-                        </select>
-                      </div>
+                    {(publicFormSchema.builtin.showCat ||
+                      publicFormSchema.builtin.showRequestedAmount) && (
+                      <div
+                        className={`grid grid-cols-1 ${
+                          publicFormSchema.builtin.showCat &&
+                          publicFormSchema.builtin.showRequestedAmount
+                            ? 'sm:grid-cols-2'
+                            : ''
+                        } gap-4`}
+                      >
+                        {publicFormSchema.builtin.showCat && (
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                              {publicFormSchema.builtin.catLabel}{' '}
+                              {publicFormSchema.builtin.requiredCat && (
+                                <span className="text-rose-500">*</span>
+                              )}
+                            </label>
+                            <select
+                              required={publicFormSchema.builtin.requiredCat}
+                              value={pubCat}
+                              onChange={(e) => setPubCat(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
+                            >
+                              {needCategories.length > 0 ? (
+                                needCategories.map((c) => (
+                                  <option key={c.id} value={c.name}>
+                                    {c.name}
+                                  </option>
+                                ))
+                              ) : (
+                                <option value="درمان و هزینه‌های پزشکی و جراحی">
+                                  درمان و هزینه‌های پزشکی و جراحی
+                                </option>
+                              )}
+                            </select>
+                          </div>
+                        )}
 
-                      {publicFormSchema.builtin.showRequestedAmount && (
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                            مبلغ تخمینی مورد نیاز (تومان)
-                          </label>
-                          <input
-                            type="number"
-                            step={500000}
-                            value={pubRequestedAmount}
-                            onChange={(e) =>
-                              setPubRequestedAmount(
-                                e.target.value === '' ? '' : Number(e.target.value)
-                              )
-                            }
-                            placeholder="مثال: 20000000"
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
-                          />
-                          {typeof pubRequestedAmount === 'number' && pubRequestedAmount > 0 && (
-                            <p className="text-[11px] text-emerald-700 font-medium mt-1">
-                              معادل: {numberToPersianWords(pubRequestedAmount)}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                        {publicFormSchema.builtin.showRequestedAmount && (
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                              {publicFormSchema.builtin.requestedAmountLabel}{' '}
+                              {publicFormSchema.builtin.requiredRequestedAmount && (
+                                <span className="text-rose-500">*</span>
+                              )}
+                            </label>
+                            <input
+                              type="number"
+                              step={500000}
+                              required={publicFormSchema.builtin.requiredRequestedAmount}
+                              value={pubRequestedAmount}
+                              onChange={(e) =>
+                                setPubRequestedAmount(
+                                  e.target.value === '' ? '' : Number(e.target.value)
+                                )
+                              }
+                              placeholder={publicFormSchema.builtin.requestedAmountPlaceholder}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                            />
+                            {typeof pubRequestedAmount === 'number' && pubRequestedAmount > 0 && (
+                              <p className="text-[11px] text-emerald-700 font-medium mt-1">
+                                معادل: {numberToPersianWords(pubRequestedAmount)}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <DynamicFieldRenderer
                       fields={publicFormSchema.customFields}
@@ -1247,14 +1368,17 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                     {publicFormSchema.builtin.showDesc && (
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                          {publicFormSchema.builtin.descLabel}
+                          {publicFormSchema.builtin.descLabel}{' '}
+                          {publicFormSchema.builtin.requiredDesc && (
+                            <span className="text-rose-500">*</span>
+                          )}
                         </label>
                         <textarea
                           rows={3}
-                          required
+                          required={publicFormSchema.builtin.requiredDesc}
                           value={pubDesc}
                           onChange={(e) => setPubDesc(e.target.value)}
-                          placeholder="توضیح دهید مشکل چیست و چه هزینه‌ای پیش‌بینی شده است..."
+                          placeholder={publicFormSchema.builtin.descPlaceholder}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
                         />
                       </div>
@@ -1263,14 +1387,17 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                     {publicFormSchema.builtin.showAddress && (
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                          {publicFormSchema.builtin.addressLabel}
+                          {publicFormSchema.builtin.addressLabel}{' '}
+                          {publicFormSchema.builtin.requiredAddress && (
+                            <span className="text-rose-500">*</span>
+                          )}
                         </label>
                         <input
                           type="text"
-                          required
+                          required={publicFormSchema.builtin.requiredAddress}
                           value={pubAddress}
                           onChange={(e) => setPubAddress(e.target.value)}
-                          placeholder="خیابان، کوچه، پلاک، واحد"
+                          placeholder={publicFormSchema.builtin.addressPlaceholder}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
                         />
                       </div>

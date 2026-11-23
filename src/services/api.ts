@@ -765,6 +765,12 @@ export const api = {
     });
     await parseJsonOrThrow(res, 'خطا در خواندن همه اعلانات');
   },
+  deleteBeneficiaryNotification: async (id: number): Promise<void> => {
+    const res = await beneficiaryAuthFetch(`/api/beneficiary/notifications/${id}`, {
+      method: 'DELETE',
+    });
+    await parseJsonOrThrow(res, 'خطا در حذف اعلان');
+  },
   getBeneficiaryPushKey: async (): Promise<string> => {
     const res = await beneficiaryAuthFetch('/api/beneficiary/push/key');
     const data = await parseJsonOrThrow<{ publicKey: string }>(

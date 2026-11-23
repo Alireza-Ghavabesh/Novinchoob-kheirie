@@ -23,7 +23,6 @@ import {
   FileText,
   Sparkles,
   ArrowRight,
-  Star,
   Bell,
   Smartphone,
 } from 'lucide-react';
@@ -555,22 +554,22 @@ export const FormsTab: React.FC<FormsTabProps> = ({
         />
       ) : editingPublicForm ? (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-emerald-950 text-white rounded-2xl p-4 shadow-sm border border-emerald-800">
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white text-slate-900 rounded-2xl p-4 shadow-sm border border-slate-200">
             <div className="flex items-center gap-2.5">
-              <Star className="w-5 h-5 text-amber-400 shrink-0" />
+              <ClipboardList className="w-5 h-5 text-emerald-600 shrink-0" />
               <div>
-                <h3 className="font-bold text-sm">
-                  ویرایش و شخصی‌سازی فرم درخواست عمومی مراجعین (فرم از پیش ثبت‌شده)
+                <h3 className="font-bold text-sm text-slate-900">
+                  ویرایش و طراحی فیلدهای فرم درخواست عمومی
                 </h3>
-                <p className="text-[11px] text-emerald-200">
-                  تغییرات شما مستقیماً در فرم عمومی سامانه (/form) و صفحه پذیرش نیازمندان اعمال می‌شود.
+                <p className="text-[11px] text-slate-500">
+                  تغییرات شما مستقیماً در فرم عمومی سامانه (/form) و پروفایل مددجو اعمال می‌شود.
                 </p>
               </div>
             </div>
             <button
               type="button"
               onClick={() => setEditingPublicForm(false)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
             >
               <ArrowRight className="w-4 h-4" />
               <span>بازگشت به لیست فرم‌ها</span>
@@ -588,181 +587,207 @@ export const FormsTab: React.FC<FormsTabProps> = ({
           />
         </div>
       ) : (
-        <div className="space-y-6">
-          {/* Pinned Pre-Registered System Form: Public Charity Request Form */}
-          {(() => {
-            const publicSchema = parsePublicFormSchema(config?.publicFormConfig);
-            const publicFormUrl =
-              typeof window !== 'undefined' ? `${window.location.origin}/form` : '/form';
-            const activeBuiltinCount = [
-              true, // name
-              true, // nid
-              true, // phone
-              true, // cat
-              publicSchema.builtin.showBirthDate,
-              publicSchema.builtin.showGuardian,
-              publicSchema.builtin.showDependents,
-              publicSchema.builtin.showHousing,
-              publicSchema.builtin.showRequestedAmount,
-              publicSchema.builtin.showDesc,
-              publicSchema.builtin.showAddress,
-            ].filter(Boolean).length;
-            const customCount = (publicSchema.customFields || []).filter((f) => f.enabled !== false).length;
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="font-bold text-sm text-slate-800 flex items-center gap-2">
+              <ClipboardList className="w-4 h-4 text-emerald-600" />
+              <span>فهرست فرم‌های سامانه ({toPersianDigits(forms.length + 1)})</span>
+            </h4>
+          </div>
 
-            return (
-              <div className="bg-gradient-to-l from-emerald-50/90 via-white to-amber-50/50 rounded-2xl border-2 border-emerald-300 shadow-sm p-5 sm:p-6 space-y-4">
-                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 border-b border-emerald-200/70 pb-4">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-700 text-white text-[10px] font-bold">
-                        <Star className="w-3 h-3 text-amber-300" />
-                        فرم از پیش ثبت‌شده سامانه
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                        فعال • متصل به کارتابل متقاضیان
-                      </span>
-                      {publicSchema.showInBeneficiaryPortal && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-100 text-teal-800 text-[10px] font-bold">
-                          <UserCheck className="w-3 h-3" />
-                          فعال در پروفایل مددجو
-                        </span>
-                      )}
-                    </div>
-                    <h4 className="font-extrabold text-base sm:text-lg text-slate-900">
-                      {publicSchema.title}
-                    </h4>
-                    <p className="text-xs text-slate-600 leading-relaxed max-w-2xl">
-                      {publicSchema.description}
-                    </p>
-                  </div>
+          {loading ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-xs text-slate-500">
+              در حال بارگذاری فرم‌ها...
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              {/* Public Charity Request Form Card — Exact same visual style as custom forms */}
+              {(() => {
+                const publicSchema = parsePublicFormSchema(config?.publicFormConfig);
+                const publicFormUrl =
+                  typeof window !== 'undefined' ? `${window.location.origin}/form` : '/form';
+                const activeBuiltinCount = [
+                  publicSchema.builtin.showName,
+                  publicSchema.builtin.showNid,
+                  publicSchema.builtin.showPhone,
+                  publicSchema.builtin.showBirthDate,
+                  publicSchema.builtin.showGuardian,
+                  publicSchema.builtin.showDependents,
+                  publicSchema.builtin.showHousing,
+                  publicSchema.builtin.showCat,
+                  publicSchema.builtin.showRequestedAmount,
+                  publicSchema.builtin.showDesc,
+                  publicSchema.builtin.showAddress,
+                ].filter(Boolean).length;
+                const customCount = (publicSchema.customFields || []).filter(
+                  (f) => f.enabled !== false
+                ).length;
 
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      disabled={togglingPublicPortal}
-                      onClick={togglePublicFormInBeneficiaryPortal}
-                      className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold rounded-xl border transition cursor-pointer disabled:opacity-50 ${
-                        publicSchema.showInBeneficiaryPortal
-                          ? 'bg-teal-600 hover:bg-teal-700 text-white border-teal-700 shadow-sm'
-                          : 'bg-teal-50 hover:bg-teal-100 text-teal-900 border-teal-300'
-                      }`}
-                    >
-                      <UserCheck className="w-4 h-4" />
-                      <span>
-                        {togglingPublicPortal
-                          ? 'در حال ذخیره...'
-                          : publicSchema.showInBeneficiaryPortal
-                          ? 'فعال در پروفایل مددجو (غیرفعال‌سازی)'
-                          : 'فعال‌سازی در پروفایل مددجو'}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingPublicForm(true)}
-                      className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                      <span>ویرایش و شخصی‌سازی فرم عمومی</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openCreateFromPublicTemplate}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-white hover:bg-amber-50 text-slate-800 border border-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
-                    >
-                      <Sparkles className="w-4 h-4 text-amber-600" />
-                      <span>ساخت فرم جدید مشابه این فرم</span>
-                    </button>
-                  </div>
-                </div>
+                return (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4 flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-extrabold text-sm sm:text-base text-slate-900">
+                              {publicSchema.title}
+                            </h4>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              فعال
+                            </span>
+                          </div>
+                          {publicSchema.description && (
+                            <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                              {publicSchema.description}
+                            </p>
+                          )}
+                        </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-center">
-                  <div className="lg:col-span-2 bg-white border border-emerald-200 rounded-xl p-2.5 flex items-center justify-between gap-2">
-                    <span className="font-mono text-[11px] text-slate-700 dir-ltr truncate select-all">
-                      {publicFormUrl}
-                    </span>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={copyPublicFormUrl}
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                          copiedPublicForm
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-amber-400 hover:bg-amber-300 text-slate-900'
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {canManageForms && (
+                            <button
+                              type="button"
+                              onClick={() => setEditingPublicForm(true)}
+                              className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
+                              title="ویرایش فرم و فیلدها"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Direct 1-Click Beneficiary Portal Toggle */}
+                      <div
+                        className={`rounded-xl border px-3 py-2 flex items-center justify-between gap-2 transition ${
+                          publicSchema.showInBeneficiaryPortal
+                            ? 'bg-teal-50/80 border-teal-200'
+                            : 'bg-slate-50 border-slate-200'
                         }`}
                       >
-                        {copiedPublicForm ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{copiedPublicForm ? 'کپی شد' : 'کپی لینک'}</span>
-                      </button>
-                      <a
-                        href="/form"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-[11px] font-semibold transition"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        <span>مشاهده</span>
-                      </a>
+                        <div className="flex items-center gap-2 text-[11px] font-bold">
+                          <UserCheck
+                            className={`w-4 h-4 shrink-0 ${
+                              publicSchema.showInBeneficiaryPortal
+                                ? 'text-teal-700'
+                                : 'text-slate-400'
+                            }`}
+                          />
+                          <span
+                            className={
+                              publicSchema.showInBeneficiaryPortal
+                                ? 'text-teal-900'
+                                : 'text-slate-600'
+                            }
+                          >
+                            {publicSchema.showInBeneficiaryPortal
+                              ? 'فعال در پروفایل مددجو'
+                              : 'نمایش در پروفایل مددجو غیرفعال است'}
+                          </span>
+                        </div>
+
+                        {canManageForms && (
+                          <button
+                            type="button"
+                            disabled={togglingPublicPortal}
+                            onClick={togglePublicFormInBeneficiaryPortal}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer disabled:opacity-50 shrink-0 ${
+                              publicSchema.showInBeneficiaryPortal
+                                ? 'bg-teal-600 hover:bg-teal-700 text-white border-teal-700'
+                                : 'bg-white hover:bg-teal-50 text-teal-800 border-teal-300'
+                            }`}
+                          >
+                            <span>
+                              {togglingPublicPortal
+                                ? 'در حال تغییر...'
+                                : publicSchema.showInBeneficiaryPortal
+                                ? 'فعال ✓'
+                                : 'فعال‌سازی در پروفایل مددجو'}
+                            </span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Shareable URL */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex items-center justify-between gap-2">
+                        <span className="font-mono text-[11px] text-slate-600 dir-ltr truncate select-all">
+                          {publicFormUrl}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={copyPublicFormUrl}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                              copiedPublicForm
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-amber-400 hover:bg-amber-300 text-slate-900'
+                            }`}
+                          >
+                            {copiedPublicForm ? (
+                              <Check className="w-3.5 h-3.5" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                            <span>{copiedPublicForm ? 'کپی شد' : 'کپی لینک'}</span>
+                          </button>
+
+                          <a
+                            href="/form"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-[11px] font-semibold transition"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>مشاهده</span>
+                          </a>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                        <span>فیلدها: {toPersianDigits(activeBuiltinCount + customCount)}</span>
+                        <span>•</span>
+                        <span>اصلی: {toPersianDigits(activeBuiltinCount)}</span>
+                        {customCount > 0 && (
+                          <>
+                            <span>•</span>
+                            <span>سفارشی: {toPersianDigits(customCount)}</span>
+                          </>
+                        )}
+                        <span>•</span>
+                        <span className="inline-flex items-center gap-1 text-slate-600">
+                          <HardDrive className="w-3 h-3 text-slate-400" />
+                          سقف فایل: {toPersianDigits(publicSchema.maxFileSizeMB || 5)} مگابایت
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
+                      {canManageForms && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingPublicForm(true)}
+                          className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>طراحی فیلدها</span>
+                        </button>
+                      )}
+                      {canManageForms && (
+                        <button
+                          type="button"
+                          onClick={openCreateFromPublicTemplate}
+                          className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>ساخت فرم مشابه</span>
+                        </button>
+                      )}
                     </div>
                   </div>
+                );
+              })()}
 
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600 lg:justify-end">
-                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-semibold">
-                      فیلدهای اصلی: {toPersianDigits(activeBuiltinCount)}
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-semibold">
-                      فیلدهای سفارشی: {toPersianDigits(customCount)}
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-semibold">
-                      سقف فایل: {toPersianDigits(publicSchema.maxFileSizeMB || 5)} مگابایت
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Custom Forms List */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="font-bold text-sm text-slate-800 flex items-center gap-2">
-                <ClipboardList className="w-4 h-4 text-emerald-600" />
-                <span>فرم‌ها و صفحات اختصاصی ساخته‌شده ({toPersianDigits(forms.length)})</span>
-              </h4>
-            </div>
-
-            {loading ? (
-              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-xs text-slate-500">
-                در حال بارگذاری فرم‌ها...
-              </div>
-            ) : forms.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-10 text-center space-y-3">
-                <ClipboardList className="w-10 h-10 text-slate-300 mx-auto" />
-                <h4 className="font-bold text-sm text-slate-800">هنوز فرم اختصاصی جدیدی نساخته‌اید</h4>
-                <p className="text-xs text-slate-500 max-w-lg mx-auto leading-relaxed">
-                  در این بخش می‌توانید فرم‌هایی دقیقاً با قدرت و چیدمان فرم درخواست عمومی (شامل تیتر بخش‌ها، کد ملی، تاریخ شمسی، مبلغ به تومان، چیدمان ۲ ستونه، آپلود مدارک، موجودیت‌ها و قوانین پیامک) بسازید و در پروفایل مددجو یا لینک مستقل منتشر کنید.
-                </p>
-                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={openCreateFromPublicTemplate}
-                    className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold rounded-xl shadow transition cursor-pointer"
-                  >
-                    <Sparkles className="w-4 h-4" />
-                    <span>ساخت با الگوی آماده فرم درخواست عمومی</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openCreateForm}
-                    className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>ساخت فرم خالی</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                {forms.map((f) => {
+              {forms.map((f) => {
                   const sharePath = `/forms/${f.slug}`;
                   const fullUrl =
                     typeof window !== 'undefined' ? `${window.location.origin}${sharePath}` : sharePath;
@@ -945,9 +970,8 @@ export const FormsTab: React.FC<FormsTabProps> = ({
                   </div>
                 );
               })}
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
 

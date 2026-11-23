@@ -65,9 +65,7 @@ export default function App() {
   );
   const [isAdminEntryRoute, setIsAdminEntryRoute] = useState<boolean>(false);
 
-  const [activeView, setActiveView] = useState<AppView>(
-    isLegacyBeneficiaryRoute ? 'beneficiary-login' : 'public'
-  );
+  const [activeView, setActiveView] = useState<AppView>('beneficiary-login');
   const [currentUser, setCurrentUser] = useState<StaffUser | null>(null);
   const [currentBeneficiary, setCurrentBeneficiary] = useState<BeneficiaryAccount | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,7 +110,7 @@ export default function App() {
     }
   }, [isStandalonePage]);
 
-  const clearAuthSession = useCallback((nextView: 'public' | 'login') => {
+  const clearAuthSession = useCallback((nextView: AppView) => {
     setCurrentUser(null);
     setRequests([]);
     setPrograms([]);
@@ -216,13 +214,18 @@ export default function App() {
             try {
               const { beneficiary } = await api.getBeneficiaryMe(bToken);
               setCurrentBeneficiary(beneficiary);
-              if (matchedBeneficiaryRoute || (!matchedAdminRoute && savedView === 'beneficiary-portal')) {
+              if (
+                matchedBeneficiaryRoute ||
+                (!matchedAdminRoute && !(hasValidStaff && savedView === 'admin'))
+              ) {
                 setActiveView('beneficiary-portal');
               }
             } catch {
-              clearBeneficiarySession(matchedBeneficiaryRoute ? 'beneficiary-login' : undefined);
+              clearBeneficiarySession(
+                matchedAdminRoute ? undefined : 'beneficiary-login'
+              );
             }
-          } else if (matchedBeneficiaryRoute) {
+          } else if (!matchedAdminRoute && !(hasValidStaff && savedView === 'admin')) {
             setActiveView('beneficiary-login');
           }
         }
@@ -281,7 +284,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    clearAuthSession(isAdminEntryRoute ? 'login' : 'public');
+    clearAuthSession(isAdminEntryRoute ? 'login' : 'beneficiary-login');
   };
 
   const handleBeneficiaryLoginSuccess = (beneficiary: BeneficiaryAccount, token: string) => {
@@ -293,7 +296,7 @@ export default function App() {
   };
 
   const handleBeneficiaryLogout = () => {
-    clearBeneficiarySession(isBeneficiaryEntryRoute ? 'beneficiary-login' : 'public');
+    clearBeneficiarySession('beneficiary-login');
     sessionStorage.removeItem(ACTIVE_VIEW_STORAGE_KEY);
   };
 
@@ -397,8 +400,8 @@ export default function App() {
               <BeneficiaryLoginView
                 config={config}
                 onLoginSuccess={handleBeneficiaryLoginSuccess}
-                onBackToPublic={() => navigateTo('public')}
-                isolated={isBeneficiaryEntryRoute}
+                onBackToPublic={() => navigateTo('beneficiary-login')}
+                isolated={true}
               />
             )}
 
@@ -409,8 +412,8 @@ export default function App() {
                 needCategories={needCategories}
                 entities={entities}
                 onLogout={handleBeneficiaryLogout}
-                onBackToPublic={() => navigateTo('public')}
-                isolated={isBeneficiaryEntryRoute}
+                onBackToPublic={() => navigateTo('beneficiary-portal')}
+                isolated={true}
               />
             )}
 
@@ -418,7 +421,9 @@ export default function App() {
               <LoginView
                 config={config}
                 onLoginSuccess={handleLoginSuccess}
-                onBackToPublic={() => navigateTo('public')}
+                onBackToPublic={() =>
+                  navigateTo(currentBeneficiary ? 'beneficiary-portal' : 'beneficiary-login')
+                }
               />
             )}
 

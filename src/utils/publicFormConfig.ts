@@ -53,24 +53,64 @@ export interface CustomFormField {
 }
 
 export interface BuiltinFieldsConfig {
+  showName: boolean;
+  requiredName: boolean;
+  nameLabel: string;
+  namePlaceholder: string;
+
+  showNid: boolean;
+  requiredNid: boolean;
+  nidLabel: string;
+  nidPlaceholder: string;
+
+  showPhone: boolean;
+  requiredPhone: boolean;
+  phoneLabel: string;
+  phonePlaceholder: string;
+
   showBirthDate: boolean;
+  requiredBirthDate: boolean;
+  birthDateLabel: string;
+  birthDatePlaceholder: string;
+
   showGuardian: boolean;
-  showDependents: boolean;
-  showHousing: boolean;
-  showRequestedAmount: boolean;
-  showDesc: boolean;
-  showAddress: boolean;
+  requiredGuardian: boolean;
   guardianLabel: string;
+
+  showDependents: boolean;
+  requiredDependents: boolean;
+  dependentsLabel: string;
+  dependentsPlaceholder: string;
+
+  showHousing: boolean;
+  requiredHousing: boolean;
   housingLabel: string;
+
+  showCat: boolean;
+  requiredCat: boolean;
   catLabel: string;
+
+  showRequestedAmount: boolean;
+  requiredRequestedAmount: boolean;
+  requestedAmountLabel: string;
+  requestedAmountPlaceholder: string;
+
+  showDesc: boolean;
+  requiredDesc: boolean;
   descLabel: string;
+  descPlaceholder: string;
+
+  showAddress: boolean;
+  requiredAddress: boolean;
   addressLabel: string;
+  addressPlaceholder: string;
 }
 
 export interface PublicFormSchema {
   title: string;
   description: string;
   heroBadge: string;
+  theme?: string;
   submitButtonText: string;
   successMessage: string;
   showTracking: boolean;
@@ -181,23 +221,63 @@ export const DEFAULT_PUBLIC_FORM_SCHEMA: PublicFormSchema = {
   description:
     'مراجعین گرامی، این فرم با حفظ کامل کرامت انسانی و محرمانگی هویت شما جهت بررسی در کمیسیون مددکاری مؤسسه خیریه طراحی شده است.',
   heroBadge: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
+  theme: 'emerald',
   submitButtonText: 'ثبت نهایی و دریافت کد رهگیری',
   successMessage: 'درخواست شما با موفقیت در سیستم ثبت گردید',
   showTracking: true,
   showInBeneficiaryPortal: false,
   builtin: {
+    showName: true,
+    requiredName: true,
+    nameLabel: 'نام و نام خانوادگی متقاضی',
+    namePlaceholder: 'مثال: فاطمه حسینی',
+
+    showNid: true,
+    requiredNid: true,
+    nidLabel: 'کد ملی ۱۰ رقمی (بدون خط تیره)',
+    nidPlaceholder: 'مثال: 0081239874',
+
+    showPhone: true,
+    requiredPhone: true,
+    phoneLabel: 'شماره تلفن همراه (جهت پیامک وضعیت)',
+    phonePlaceholder: 'مثال: 09123334455',
+
     showBirthDate: true,
+    requiredBirthDate: false,
+    birthDateLabel: 'تاریخ تولد (شمسی)',
+    birthDatePlaceholder: 'انتخاب تاریخ تولد...',
+
     showGuardian: true,
-    showDependents: true,
-    showHousing: true,
-    showRequestedAmount: true,
-    showDesc: true,
-    showAddress: true,
+    requiredGuardian: false,
     guardianLabel: 'وضعیت سرپرستی خانوار',
+
+    showDependents: true,
+    requiredDependents: false,
+    dependentsLabel: 'تعداد افراد تحت تکفل',
+    dependentsPlaceholder: 'مثلاً 2',
+
+    showHousing: true,
+    requiredHousing: false,
     housingLabel: 'وضعیت محل سکونت',
+
+    showCat: true,
+    requiredCat: true,
     catLabel: 'دسته‌بندی موضوع نیاز',
+
+    showRequestedAmount: true,
+    requiredRequestedAmount: false,
+    requestedAmountLabel: 'مبلغ تخمینی مورد نیاز (تومان)',
+    requestedAmountPlaceholder: 'مثال: 20000000',
+
+    showDesc: true,
+    requiredDesc: true,
     descLabel: 'شرح تفصیلی مشکل و وضعیت اضطرار',
+    descPlaceholder: 'توضیح دهید مشکل چیست و چه هزینه‌ای پیش‌بینی شده است...',
+
+    showAddress: true,
+    requiredAddress: true,
     addressLabel: 'آدرس دقیق محل سکونت',
+    addressPlaceholder: 'نام شهر، منطقه، خیابان اصلی، کوچه، پلاک و طبقه',
   },
   guardianOptions: [...DEFAULT_GUARDIAN_OPTIONS],
   housingOptions: [...DEFAULT_HOUSING_OPTIONS],
@@ -477,6 +557,10 @@ export function parsePublicFormSchema(raw?: string | null): PublicFormSchema {
         typeof parsed?.heroBadge === 'string'
           ? parsed.heroBadge
           : DEFAULT_PUBLIC_FORM_SCHEMA.heroBadge,
+      theme:
+        typeof parsed?.theme === 'string' && parsed.theme.trim()
+          ? parsed.theme.trim()
+          : 'emerald',
       submitButtonText:
         typeof parsed?.submitButtonText === 'string' && parsed.submitButtonText.trim()
           ? parsed.submitButtonText.trim()

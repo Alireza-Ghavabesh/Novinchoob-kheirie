@@ -1633,8 +1633,36 @@ app.post('/api/requests', async (req, res) => {
       customFields,
     } = req.body;
 
-    if (!name || !nid || !phone || !cat) {
-      return res.status(400).json({ error: 'اطلاعات هویتی و نوع درخواست الزامی است.' });
+    const appCfg = await prisma.appConfig.findUnique({ where: { id: 1 } });
+    let builtinCfg: Record<string, any> = {};
+    try {
+      if (appCfg?.publicFormConfig) {
+        const parsedCfg = JSON.parse(appCfg.publicFormConfig);
+        if (parsedCfg?.builtin && typeof parsedCfg.builtin === 'object') {
+          builtinCfg = parsedCfg.builtin;
+        }
+      }
+    } catch {
+      builtinCfg = {};
+    }
+
+    const reqName = builtinCfg.showName !== false && builtinCfg.requiredName !== false;
+    const reqNid = builtinCfg.showNid !== false && builtinCfg.requiredNid !== false;
+    const reqPhone = builtinCfg.showPhone !== false && builtinCfg.requiredPhone !== false;
+    const reqCat = builtinCfg.showCat !== false && builtinCfg.requiredCat !== false;
+
+    const cleanName = String(name || '').trim();
+    const cleanNid = String(nid || '').trim();
+    const cleanPhone = String(phone || '').trim();
+    const cleanCat = String(cat || '').trim();
+
+    if (
+      (reqName && !cleanName) ||
+      (reqNid && !cleanNid) ||
+      (reqPhone && !cleanPhone) ||
+      (reqCat && !cleanCat)
+    ) {
+      return res.status(400).json({ error: 'لطفاً فیلدهای الزامی فرم را تکمیل نمایید.' });
     }
 
     // Generate random 4-digit tracking number
@@ -1651,14 +1679,14 @@ app.post('/api/requests', async (req, res) => {
     const newReq = await prisma.beneficiaryRequest.create({
       data: {
         trackingCode,
-        name,
-        nid,
-        phone,
+        name: cleanName || '-',
+        nid: cleanNid || '',
+        phone: cleanPhone || '',
         birthDate: birthDate || '',
         guardian: guardian !== undefined && String(guardian).trim() !== '' ? String(guardian) : '-',
         dependents: parseInt(dependents) || 0,
         housing: housing !== undefined && String(housing).trim() !== '' ? String(housing) : '-',
-        cat,
+        cat: cleanCat || '-',
         requestedAmount: parseFloat(requestedAmount) || 0,
         approvedAmount: 0,
         desc: desc || '',
@@ -4215,6 +4243,28 @@ app.post(
   }
 );
 
+app.delete(
+  '/api/beneficiary/notifications/:id',
+  requireBeneficiaryAuth,
+  async (req: BeneficiaryRequestContext, res) => {
+    try {
+      const beneficiary = req.authBeneficiary!;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: 'شناسه اعلان نامعتبر است.' });
+
+      await prisma.beneficiaryNotification.deleteMany({
+        where: {
+          id,
+          ...buildBeneficiaryNotificationWhere(beneficiary),
+        },
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: 'خطا در حذف اعلان', details: String(error) });
+    }
+  }
+);
+
 // Beneficiary Web Push Subscription Routes
 app.get('/api/beneficiary/push/key', requireBeneficiaryAuth, async (_req, res) => {
   try {
@@ -4305,13 +4355,36 @@ const handleBeneficiaryPublicRequestUpsert = async (
       customFields,
     } = req.body || {};
 
-    const cleanName = String(name || '').trim();
-    const cleanNid = String(nid || '').trim();
-    const cleanPhone = String(phone || beneficiary.phone || '').trim();
-    const cleanCat = String(cat || '').trim();
+    const appCfg = await prisma.appConfig.findUnique({ where: { id: 1 } });
+    let builtinCfg: Record<string, any> = {};
+    try {
+      if (appCfg?.publicFormConfig) {
+        const parsedCfg = JSON.parse(appCfg.publicFormConfig);
+        if (parsedCfg?.builtin && typeof parsedCfg.builtin === 'object') {
+          builtinCfg = parsedCfg.builtin;
+        }
+      }
+    } catch {
+      builtinCfg = {};
+    }
 
-    if (!cleanName || !cleanNid || !cleanPhone || !cleanCat) {
-      return res.status(400).json({ error: 'اطلاعات هویتی (نام، کد ملی، شماره تماس) و نوع درخواست الزامی است.' });
+    const reqName = builtinCfg.showName !== false && builtinCfg.requiredName !== false;
+    const reqNid = builtinCfg.showNid !== false && builtinCfg.requiredNid !== false;
+    const reqPhone = builtinCfg.showPhone !== false && builtinCfg.requiredPhone !== false;
+    const reqCat = builtinCfg.showCat !== false && builtinCfg.requiredCat !== false;
+
+    const cleanName = String(name || '').trim() || (reqName ? '' : beneficiary.fullName || '-');
+    const cleanNid = String(nid || '').trim();
+    const cleanPhone = String(phone || '').trim() || (reqPhone ? '' : beneficiary.phone || '');
+    const cleanCat = String(cat || '').trim() || (reqCat ? '' : '-');
+
+    if (
+      (reqName && !cleanName) ||
+      (reqNid && !cleanNid) ||
+      (reqPhone && !cleanPhone) ||
+      (reqCat && !cleanCat)
+    ) {
+      return res.status(400).json({ error: 'لطفاً فیلدهای الزامی فرم را تکمیل نمایید.' });
     }
 
     let serializedCustomFields = '[]';

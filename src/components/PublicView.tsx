@@ -21,8 +21,6 @@ import {
   numberToPersianWords,
   isValidIranianNID,
   toEnglishDigits,
-  toPersianDigits,
-  SHAMSI_MONTHS,
 } from '../utils/persian';
 import { api } from '../services/api';
 import {
@@ -34,6 +32,15 @@ import {
   DynamicFormValuesMap,
   validateAndExtractCustomFields,
 } from './DynamicFieldRenderer';
+import { ShamsiDatePicker } from './ShamsiDatePicker';
+
+const THEME_GRADIENTS: Record<string, string> = {
+  emerald: 'from-emerald-800 via-teal-800 to-emerald-900 border-emerald-700/60',
+  teal: 'from-teal-800 via-cyan-800 to-teal-900 border-teal-700/60',
+  blue: 'from-blue-900 via-indigo-800 to-slate-900 border-blue-700/60',
+  amber: 'from-amber-700 via-orange-700 to-amber-900 border-amber-600/60',
+  slate: 'from-slate-800 via-slate-900 to-slate-950 border-slate-700/60',
+};
 
 interface PublicViewProps {
   config: AppConfig | null;
@@ -59,9 +66,7 @@ export const PublicView: React.FC<PublicViewProps> = ({
   const [name, setName] = useState('');
   const [nid, setNid] = useState('');
   const [phone, setPhone] = useState('');
-  const [birthYear, setBirthYear] = useState('1365');
-  const [birthMonth, setBirthMonth] = useState('01');
-  const [birthDay, setBirthDay] = useState('15');
+  const [birthDate, setBirthDate] = useState('');
   const [guardian, setGuardian] = useState(formSchema.guardianOptions[0] || 'زن سرپرست خانوار');
   const [dependents, setDependents] = useState(2);
   const [housing, setHousing] = useState(formSchema.housingOptions[0] || 'استیجاری');
@@ -100,24 +105,53 @@ export const PublicView: React.FC<PublicViewProps> = ({
     e.preventDefault();
     setFormError('');
 
-    if (!name.trim()) {
-      setFormError('لطفاً نام و نام خانوادگی را وارد نمایید.');
+    const b = formSchema.builtin;
+
+    if (b.showName && b.requiredName && !name.trim()) {
+      setFormError(`لطفاً «${b.nameLabel}» را وارد نمایید.`);
       return;
     }
 
     const cleanNid = toEnglishDigits(nid.trim());
-    if (!cleanNid || cleanNid.length !== 10) {
-      setFormError('کد ملی باید دقیقاً ۱۰ رقم باشد.');
+    if (b.showNid && b.requiredNid && !cleanNid) {
+      setFormError(`لطفاً «${b.nidLabel}» را وارد نمایید.`);
       return;
     }
-    if (!isValidIranianNID(cleanNid)) {
-      setFormError('کد ملی وارد شده با الگوریتم استاندارد کشوری مطابقت ندارد.');
-      return;
+    if (b.showNid && cleanNid) {
+      if (cleanNid.length !== 10) {
+        setFormError('کد ملی باید دقیقاً ۱۰ رقم باشد.');
+        return;
+      }
+      if (!isValidIranianNID(cleanNid)) {
+        setFormError('کد ملی وارد شده با الگوریتم استاندارد کشوری مطابقت ندارد.');
+        return;
+      }
     }
 
     const cleanPhone = toEnglishDigits(phone.trim());
-    if (!cleanPhone || cleanPhone.length < 10) {
+    if (b.showPhone && b.requiredPhone && (!cleanPhone || cleanPhone.length < 10)) {
       setFormError('شماره تلفن همراه معتبر نمی‌باشد.');
+      return;
+    }
+    if (b.showPhone && cleanPhone && cleanPhone.length < 10) {
+      setFormError('شماره تلفن همراه معتبر نمی‌باشد.');
+      return;
+    }
+
+    if (b.showBirthDate && b.requiredBirthDate && !birthDate.trim()) {
+      setFormError(`لطفاً «${b.birthDateLabel}» را انتخاب نمایید.`);
+      return;
+    }
+    if (b.showRequestedAmount && b.requiredRequestedAmount && (!requestedAmount || Number(requestedAmount) <= 0)) {
+      setFormError(`لطفاً «${b.requestedAmountLabel}» را وارد نمایید.`);
+      return;
+    }
+    if (b.showDesc && b.requiredDesc && !desc.trim()) {
+      setFormError(`لطفاً «${b.descLabel}» را وارد نمایید.`);
+      return;
+    }
+    if (b.showAddress && b.requiredAddress && !address.trim()) {
+      setFormError(`لطفاً «${b.addressLabel}» را وارد نمایید.`);
       return;
     }
 
@@ -132,25 +166,24 @@ export const PublicView: React.FC<PublicViewProps> = ({
     }
     const submittedCustomFields = extracted.values;
 
-    const selectedCat = cat || (needCategories[0] ? needCategories[0].name : 'درمان و هزینه‌های پزشکی');
-    const birthDate = formSchema.builtin.showBirthDate
-      ? `${birthYear}/${birthMonth.padStart(2, '0')}/${birthDay.padStart(2, '0')}`
-      : '';
+    const selectedCat = b.showCat
+      ? cat || (needCategories[0] ? needCategories[0].name : 'درمان و هزینه‌های پزشکی')
+      : '-';
 
     try {
       setSubmitting(true);
       const newReq = await api.createRequest({
-        name: name.trim(),
-        nid: cleanNid,
-        phone: cleanPhone,
-        birthDate,
-        guardian: formSchema.builtin.showGuardian ? guardian : '-',
-        dependents: formSchema.builtin.showDependents ? Number(dependents) : 0,
-        housing: formSchema.builtin.showHousing ? housing : '-',
+        name: b.showName ? name.trim() : '-',
+        nid: b.showNid ? cleanNid : '',
+        phone: b.showPhone ? cleanPhone : '',
+        birthDate: b.showBirthDate ? birthDate.trim() : '',
+        guardian: b.showGuardian ? guardian : '-',
+        dependents: b.showDependents ? Number(dependents) : 0,
+        housing: b.showHousing ? housing : '-',
         cat: selectedCat,
-        requestedAmount: formSchema.builtin.showRequestedAmount ? Number(requestedAmount) || 0 : 0,
-        desc: formSchema.builtin.showDesc ? desc.trim() : '',
-        address: formSchema.builtin.showAddress ? address.trim() : '',
+        requestedAmount: b.showRequestedAmount ? Number(requestedAmount) || 0 : 0,
+        desc: b.showDesc ? desc.trim() : '',
+        address: b.showAddress ? address.trim() : '',
         customFields: submittedCustomFields,
       });
 
@@ -161,6 +194,7 @@ export const PublicView: React.FC<PublicViewProps> = ({
       setName('');
       setNid('');
       setPhone('');
+      setBirthDate('');
       setDesc('');
       setAddress('');
       setRequestedAmount(15000000);
@@ -200,9 +234,12 @@ export const PublicView: React.FC<PublicViewProps> = ({
 
   return (
     <div className="py-8 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto space-y-8">
-      {/* Hero / Islamic Greeting Banner */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-800 via-teal-800 to-emerald-900 text-white p-6 sm:p-8 shadow-xl border border-emerald-700/60">
-        <div className="absolute -left-10 -bottom-10 w-48 h-48 bg-emerald-600/20 rounded-full blur-2xl pointer-events-none" />
+      {/* Hero Banner */}
+      <div
+        className={`relative overflow-hidden rounded-2xl bg-gradient-to-r ${
+          THEME_GRADIENTS[formSchema.theme || 'emerald'] || THEME_GRADIENTS.emerald
+        } text-white p-6 sm:p-8 shadow-xl border`}
+      >
         <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-right">
           <div className="space-y-3">
             {formSchema.heroBadge && (
@@ -214,9 +251,7 @@ export const PublicView: React.FC<PublicViewProps> = ({
               {formSchema.title}
             </h2>
             {formSchema.description && (
-              <p className="text-sm text-emerald-100/90 max-w-2xl leading-relaxed whitespace-pre-line">
-                «وَمَا تُنفِقُوا مِنْ خَيْرٍ يُوَفَّ إِلَيْكُمْ وَأَنتُمْ لَا تُظْلَمُونَ»
-                <br />
+              <p className="text-sm text-white/90 max-w-2xl leading-relaxed whitespace-pre-line">
                 {formSchema.description}
               </p>
             )}
@@ -321,98 +356,93 @@ export const PublicView: React.FC<PublicViewProps> = ({
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* Row 1: Name & National ID */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  نام و نام خانوادگی متقاضی <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="مثال: فاطمه حسینی"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm outline-none transition"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  کد ملی ۱۰ رقمی (بدون خط تیره) <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={10}
-                  placeholder="مثال: 0081239874"
-                  value={nid}
-                  onChange={(e) => setNid(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm outline-none transition font-mono"
-                />
-              </div>
-            </div>
-
-            {/* Row 2: Phone & Optional Birth Date */}
-            <div className={`grid grid-cols-1 ${formSchema.builtin.showBirthDate ? 'sm:grid-cols-2' : ''} gap-4`}>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  شماره تلفن همراه (جهت پیامک وضعیت) <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="tel"
-                  required
-                  placeholder="مثال: 09123334455"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm outline-none transition font-mono dir-ltr text-right"
-                />
-              </div>
-
-              {formSchema.builtin.showBirthDate && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    تاریخ تولد (شمسی)
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <select
-                      value={birthYear}
-                      onChange={(e) => setBirthYear(e.target.value)}
-                      className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                    >
-                      {Array.from({ length: 70 }, (_, i) => 1340 + i).map((y) => (
-                        <option key={y} value={y}>
-                          {toPersianDigits(y)}
-                        </option>
-                      ))}
-                    </select>
-
-                    <select
-                      value={birthMonth}
-                      onChange={(e) => setBirthMonth(e.target.value)}
-                      className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                    >
-                      {SHAMSI_MONTHS.map((m, idx) => (
-                        <option key={m} value={String(idx + 1).padStart(2, '0')}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-
-                    <select
-                      value={birthDay}
-                      onChange={(e) => setBirthDay(e.target.value)}
-                      className="px-2 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
-                    >
-                      {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
-                        <option key={d} value={String(d).padStart(2, '0')}>
-                          {toPersianDigits(d)}
-                        </option>
-                      ))}
-                    </select>
+            {(formSchema.builtin.showName || formSchema.builtin.showNid) && (
+              <div
+                className={`grid grid-cols-1 ${
+                  formSchema.builtin.showName && formSchema.builtin.showNid ? 'sm:grid-cols-2' : ''
+                } gap-4`}
+              >
+                {formSchema.builtin.showName && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      {formSchema.builtin.nameLabel}{' '}
+                      {formSchema.builtin.requiredName && <span className="text-rose-500">*</span>}
+                    </label>
+                    <input
+                      type="text"
+                      required={formSchema.builtin.requiredName}
+                      placeholder={formSchema.builtin.namePlaceholder}
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm outline-none transition"
+                    />
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+
+                {formSchema.builtin.showNid && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      {formSchema.builtin.nidLabel}{' '}
+                      {formSchema.builtin.requiredNid && <span className="text-rose-500">*</span>}
+                    </label>
+                    <input
+                      type="text"
+                      required={formSchema.builtin.requiredNid}
+                      maxLength={10}
+                      placeholder={formSchema.builtin.nidPlaceholder}
+                      value={nid}
+                      onChange={(e) => setNid(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm outline-none transition font-mono"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Row 2: Phone & Birth Date */}
+            {(formSchema.builtin.showPhone || formSchema.builtin.showBirthDate) && (
+              <div
+                className={`grid grid-cols-1 ${
+                  formSchema.builtin.showPhone && formSchema.builtin.showBirthDate
+                    ? 'sm:grid-cols-2'
+                    : ''
+                } gap-4`}
+              >
+                {formSchema.builtin.showPhone && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      {formSchema.builtin.phoneLabel}{' '}
+                      {formSchema.builtin.requiredPhone && <span className="text-rose-500">*</span>}
+                    </label>
+                    <input
+                      type="tel"
+                      required={formSchema.builtin.requiredPhone}
+                      placeholder={formSchema.builtin.phonePlaceholder}
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm outline-none transition font-mono dir-ltr text-right"
+                    />
+                  </div>
+                )}
+
+                {formSchema.builtin.showBirthDate && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      {formSchema.builtin.birthDateLabel}{' '}
+                      {formSchema.builtin.requiredBirthDate && (
+                        <span className="text-rose-500">*</span>
+                      )}
+                    </label>
+                    <ShamsiDatePicker
+                      value={birthDate}
+                      onChange={setBirthDate}
+                      placeholder={formSchema.builtin.birthDatePlaceholder}
+                      required={formSchema.builtin.requiredBirthDate}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Row 3: Guardian Status, Dependents & Housing (Dynamically shown) */}
             {(formSchema.builtin.showGuardian ||
@@ -422,9 +452,13 @@ export const PublicView: React.FC<PublicViewProps> = ({
                 {formSchema.builtin.showGuardian && (
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                      {formSchema.builtin.guardianLabel}
+                      {formSchema.builtin.guardianLabel}{' '}
+                      {formSchema.builtin.requiredGuardian && (
+                        <span className="text-rose-500">*</span>
+                      )}
                     </label>
                     <select
+                      required={formSchema.builtin.requiredGuardian}
                       value={guardian}
                       onChange={(e) => setGuardian(e.target.value)}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -441,13 +475,18 @@ export const PublicView: React.FC<PublicViewProps> = ({
                 {formSchema.builtin.showDependents && (
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                      تعداد افراد تحت تکفل
+                      {formSchema.builtin.dependentsLabel}{' '}
+                      {formSchema.builtin.requiredDependents && (
+                        <span className="text-rose-500">*</span>
+                      )}
                     </label>
                     <div className="flex items-center">
                       <input
                         type="number"
                         min={0}
                         max={15}
+                        required={formSchema.builtin.requiredDependents}
+                        placeholder={formSchema.builtin.dependentsPlaceholder}
                         value={dependents}
                         onChange={(e) => setDependents(Math.max(0, parseInt(e.target.value) || 0))}
                         className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -460,9 +499,13 @@ export const PublicView: React.FC<PublicViewProps> = ({
                 {formSchema.builtin.showHousing && (
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                      {formSchema.builtin.housingLabel}
+                      {formSchema.builtin.housingLabel}{' '}
+                      {formSchema.builtin.requiredHousing && (
+                        <span className="text-rose-500">*</span>
+                      )}
                     </label>
                     <select
+                      required={formSchema.builtin.requiredHousing}
                       value={housing}
                       onChange={(e) => setHousing(e.target.value)}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -479,51 +522,69 @@ export const PublicView: React.FC<PublicViewProps> = ({
             )}
 
             {/* Row 4: Need Category & Optional Requested Amount */}
-            <div className={`grid grid-cols-1 ${formSchema.builtin.showRequestedAmount ? 'sm:grid-cols-2' : ''} gap-4`}>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  {formSchema.builtin.catLabel} <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={cat}
-                  onChange={(e) => setCat(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
-                >
-                  {needCategories.length > 0 ? (
-                    needCategories.map((c) => (
-                      <option key={c.id} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="درمان و هزینه‌های پزشکی و جراحی">
-                      درمان و هزینه‌های پزشکی و جراحی
-                    </option>
-                  )}
-                </select>
-              </div>
+            {(formSchema.builtin.showCat || formSchema.builtin.showRequestedAmount) && (
+              <div
+                className={`grid grid-cols-1 ${
+                  formSchema.builtin.showCat && formSchema.builtin.showRequestedAmount
+                    ? 'sm:grid-cols-2'
+                    : ''
+                } gap-4`}
+              >
+                {formSchema.builtin.showCat && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      {formSchema.builtin.catLabel}{' '}
+                      {formSchema.builtin.requiredCat && <span className="text-rose-500">*</span>}
+                    </label>
+                    <select
+                      required={formSchema.builtin.requiredCat}
+                      value={cat}
+                      onChange={(e) => setCat(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
+                    >
+                      {needCategories.length > 0 ? (
+                        needCategories.map((c) => (
+                          <option key={c.id} value={c.name}>
+                            {c.name}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="درمان و هزینه‌های پزشکی و جراحی">
+                          درمان و هزینه‌های پزشکی و جراحی
+                        </option>
+                      )}
+                    </select>
+                  </div>
+                )}
 
-              {formSchema.builtin.showRequestedAmount && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    مبلغ تخمینی مورد نیاز (تومان)
-                  </label>
-                  <input
-                    type="number"
-                    step={500000}
-                    value={requestedAmount}
-                    onChange={(e) => setRequestedAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                    placeholder="مثال: 20000000"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
-                  />
-                  {typeof requestedAmount === 'number' && requestedAmount > 0 && (
-                    <p className="text-[11px] text-emerald-700 font-medium mt-1">
-                      معادل: {numberToPersianWords(requestedAmount)}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
+                {formSchema.builtin.showRequestedAmount && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      {formSchema.builtin.requestedAmountLabel}{' '}
+                      {formSchema.builtin.requiredRequestedAmount && (
+                        <span className="text-rose-500">*</span>
+                      )}
+                    </label>
+                    <input
+                      type="number"
+                      step={500000}
+                      required={formSchema.builtin.requiredRequestedAmount}
+                      value={requestedAmount}
+                      onChange={(e) =>
+                        setRequestedAmount(e.target.value === '' ? '' : Number(e.target.value))
+                      }
+                      placeholder={formSchema.builtin.requestedAmountPlaceholder}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                    />
+                    {typeof requestedAmount === 'number' && requestedAmount > 0 && (
+                      <p className="text-[11px] text-emerald-700 font-medium mt-1">
+                        معادل: {numberToPersianWords(requestedAmount)}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Dynamic Custom & Entity Fields from Admin Settings */}
             <DynamicFieldRenderer
@@ -539,14 +600,15 @@ export const PublicView: React.FC<PublicViewProps> = ({
             {formSchema.builtin.showDesc && (
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  {formSchema.builtin.descLabel}
+                  {formSchema.builtin.descLabel}{' '}
+                  {formSchema.builtin.requiredDesc && <span className="text-rose-500">*</span>}
                 </label>
                 <textarea
                   rows={3}
-                  required
+                  required={formSchema.builtin.requiredDesc}
                   value={desc}
                   onChange={(e) => setDesc(e.target.value)}
-                  placeholder="توضیح دهید مشکل چیست، چه هزینه‌ای پیش‌بینی شده و چه اقدامات درمانی یا معیشتی تا کنون انجام داده‌اید..."
+                  placeholder={formSchema.builtin.descPlaceholder}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
                 />
               </div>
@@ -556,14 +618,15 @@ export const PublicView: React.FC<PublicViewProps> = ({
             {formSchema.builtin.showAddress && (
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  {formSchema.builtin.addressLabel}
+                  {formSchema.builtin.addressLabel}{' '}
+                  {formSchema.builtin.requiredAddress && <span className="text-rose-500">*</span>}
                 </label>
                 <input
                   type="text"
-                  required
+                  required={formSchema.builtin.requiredAddress}
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
-                  placeholder="نام شهر، منطقه، خیابان اصلی، کوچه، پلاک و طبقه"
+                  placeholder={formSchema.builtin.addressPlaceholder}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition"
                 />
               </div>
