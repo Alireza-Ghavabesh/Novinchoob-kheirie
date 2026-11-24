@@ -15,9 +15,14 @@ import {
   UserCheck,
   FileText,
   Save,
+  Tag,
+  Check,
+  X,
+  Edit3,
 } from 'lucide-react';
-import { AppConfig } from '../../types';
+import { AppConfig, Category } from '../../types';
 import { api } from '../../services/api';
+import { toPersianDigits } from '../../utils/persian';
 import {
   BuiltinFieldsConfig,
   DEFAULT_GUARDIAN_OPTIONS,
@@ -31,8 +36,10 @@ import { FormFieldsEditor } from './FormFieldsEditor';
 
 interface PublicFormBuilderSectionProps {
   config: AppConfig | null;
+  needCategories: Category[];
   entities: EntityDefinition[];
   onConfigUpdated: (config: AppConfig) => void;
+  onRefreshCategories: () => void;
   onOpenEntitiesTab?: () => void;
 }
 
@@ -167,7 +174,7 @@ const BUILTIN_FIELD_ITEMS: BuiltinFieldMeta[] = [
     showKey: 'showCat',
     requiredKey: 'requiredCat',
     labelKey: 'catLabel',
-    hint: 'گزینه‌های این فیلد از «تنظیمات ← دسته‌بندی‌های نیاز» خوانده می‌شوند.',
+    hint: 'گزینه‌های این فیلد از بخش «دسته‌بندی‌های موضوع نیاز» در پایین همین صفحه قابل افزودن، ویرایش و حذف هستند.',
   },
   {
     id: 'requestedAmount',
@@ -208,8 +215,10 @@ const THEME_OPTIONS = [
 
 export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> = ({
   config,
+  needCategories,
   entities,
   onConfigUpdated,
+  onRefreshCategories,
   onOpenEntitiesTab,
 }) => {
   const [schema, setSchema] = useState<PublicFormSchema>(() =>
@@ -224,10 +233,71 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
   const [newGuardianOpt, setNewGuardianOpt] = useState('');
   const [newHousingOpt, setNewHousingOpt] = useState('');
 
+  // Need Categories manager states
+  const [newNeedCat, setNewNeedCat] = useState('');
+  const [addingNeedCat, setAddingNeedCat] = useState(false);
+  const [editingNeedCatId, setEditingNeedCatId] = useState<number | null>(null);
+  const [editingNeedCatName, setEditingNeedCatName] = useState('');
+  const [savingNeedCatId, setSavingNeedCatId] = useState<number | null>(null);
+  const [deletingNeedCatId, setDeletingNeedCatId] = useState<number | null>(null);
+
   // Save states
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+
+  const handleAddNeedCategory = async () => {
+    const val = newNeedCat.trim();
+    if (!val) return;
+    setAddingNeedCat(true);
+    setErrorMsg('');
+    try {
+      await api.addNeedCategory(val);
+      setNewNeedCat('');
+      onRefreshCategories();
+      setSavedMsg(`دسته‌بندی «${val}» با موفقیت به فرم نیازسنجی اضافه شد.`);
+      setTimeout(() => setSavedMsg(''), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'خطا در افزودن دسته‌بندی موضوع نیاز');
+    } finally {
+      setAddingNeedCat(false);
+    }
+  };
+
+  const handleSaveEditNeedCategory = async (id: number) => {
+    const val = editingNeedCatName.trim();
+    if (!val) return;
+    setSavingNeedCatId(id);
+    setErrorMsg('');
+    try {
+      await api.updateNeedCategory(id, val);
+      setEditingNeedCatId(null);
+      setEditingNeedCatName('');
+      onRefreshCategories();
+      setSavedMsg(`نام دسته‌بندی به «${val}» به‌روزرسانی شد.`);
+      setTimeout(() => setSavedMsg(''), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'خطا در ویرایش دسته‌بندی');
+    } finally {
+      setSavingNeedCatId(null);
+    }
+  };
+
+  const handleDeleteNeedCategory = async (catItem: Category) => {
+    if (!confirm(`آیا از حذف دسته‌بندی «${catItem.name}» اطمینان دارید؟`)) return;
+    setDeletingNeedCatId(catItem.id);
+    setErrorMsg('');
+    try {
+      await api.deleteNeedCategory(catItem.id);
+      onRefreshCategories();
+      setSavedMsg(`دسته‌بندی «${catItem.name}» حذف شد.`);
+      setTimeout(() => setSavedMsg(''), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'خطا در حذف دسته‌بندی');
+    } finally {
+      setDeletingNeedCatId(null);
+    }
+  };
 
   const persistSchema = async (
     nextSchema: PublicFormSchema,
@@ -654,10 +724,144 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
         </div>
       </div>
 
-      {/* 3. Select Box Options Managers (Guardian & Housing) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Guardian Select Options */}
-        <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+      {/* 3. Select Box Options Managers (Need Categories, Guardian & Housing) */}
+      <div className="space-y-5">
+        {/* Need Categories Manager — Direct Live Editing Inside Form Builder */}
+        <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5 space-y-3.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
+            <div className="flex items-center gap-2">
+              <Tag className="w-4 h-4 text-emerald-600 shrink-0" />
+              <div>
+                <h4 className="font-bold text-xs sm:text-sm text-slate-900">
+                  دسته‌بندی‌های «{schema.builtin.catLabel}» ({toPersianDigits(needCategories.length)} دسته)
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  تغییرات این بخش بلافاصله در فرم نیازسنجی مردمی، پروفایل مددجو، کارتابل و گزارش‌های مالی اعمال می‌شود.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-2 text-xs">
+            <input
+              type="text"
+              value={newNeedCat}
+              onChange={(e) => setNewNeedCat(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAddNeedCategory();
+                }
+              }}
+              placeholder="نام دسته‌بندی نیاز جدید (مثال: کمک‌هزینه جهیزیه، درمان تخصصی...)"
+              className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <button
+              type="button"
+              disabled={addingNeedCat || !newNeedCat.trim()}
+              onClick={handleAddNeedCategory}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl flex items-center gap-1 transition cursor-pointer shrink-0 disabled:opacity-50"
+            >
+              <Plus className="w-4 h-4" />
+              <span>{addingNeedCat ? 'در حال ثبت...' : 'افزودن دسته'}</span>
+            </button>
+          </div>
+
+          {needCategories.length === 0 ? (
+            <div className="text-center py-4 text-xs text-slate-500 bg-white rounded-xl border border-dashed border-slate-300">
+              هنوز هیچ دسته‌بندی نیازی ثبت نشده است.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-0.5">
+              {needCategories.map((catItem) => {
+                const isEditing = editingNeedCatId === catItem.id;
+                return (
+                  <div
+                    key={catItem.id}
+                    className="flex items-center justify-between gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 text-xs"
+                  >
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        autoFocus
+                        value={editingNeedCatName}
+                        onChange={(e) => setEditingNeedCatName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveEditNeedCategory(catItem.id);
+                          } else if (e.key === 'Escape') {
+                            setEditingNeedCatId(null);
+                            setEditingNeedCatName('');
+                          }
+                        }}
+                        className="flex-1 px-2 py-1 rounded-lg border border-emerald-400 outline-none focus:ring-2 focus:ring-emerald-500/30 text-slate-900 font-semibold text-xs"
+                      />
+                    ) : (
+                      <span className="flex-1 font-semibold text-slate-800 truncate">
+                        {catItem.name}
+                      </span>
+                    )}
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      {isEditing ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={savingNeedCatId === catItem.id || !editingNeedCatName.trim()}
+                            onClick={() => handleSaveEditNeedCategory(catItem.id)}
+                            className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition cursor-pointer disabled:opacity-40"
+                            title="ذخیره نام جدید"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingNeedCatId(null);
+                              setEditingNeedCatName('');
+                            }}
+                            className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                            title="انصراف"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingNeedCatId(catItem.id);
+                              setEditingNeedCatName(catItem.name);
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
+                            title="ویرایش نام دسته"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletingNeedCatId === catItem.id}
+                            onClick={() => handleDeleteNeedCategory(catItem)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer disabled:opacity-40"
+                            title="حذف دسته"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Guardian Select Options */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
           <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
             <div className="flex items-center gap-2">
               <ListChecks className="w-4 h-4 text-emerald-600" />
@@ -840,6 +1044,7 @@ export const PublicFormBuilderSection: React.FC<PublicFormBuilderSectionProps> =
               </div>
             ))}
           </div>
+        </div>
         </div>
       </div>
 

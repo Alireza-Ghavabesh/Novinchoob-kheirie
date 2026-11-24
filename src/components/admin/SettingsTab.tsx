@@ -29,7 +29,12 @@ import {
   Save,
 } from 'lucide-react';
 import { api } from '../../services/api';
-import { LOGIN_THEMES, getLoginTheme } from '../../utils/loginThemes';
+import {
+  DEFAULT_BENEFICIARY_LOGIN_CONFIG,
+  LOGIN_THEMES,
+  getLoginTheme,
+  parseBeneficiaryLoginConfig,
+} from '../../utils/loginThemes';
 import { EntityDefinition } from '../../utils/publicFormConfig';
 import { OtpSmsSettingsCard } from './OtpSmsSettingsCard';
 
@@ -131,6 +136,49 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   const [savingLoginCfg, setSavingLoginCfg] = useState(false);
   const [loginCfgSuccess, setLoginCfgSuccess] = useState(false);
   const [loginCfgError, setLoginCfgError] = useState('');
+
+  // Login Customization Active Sub-Tab ('beneficiary' | 'staff')
+  const [loginEditorTab, setLoginEditorTab] = useState<'beneficiary' | 'staff'>('beneficiary');
+
+  // Beneficiary Login Page Customization State
+  const initialBenCfg = parseBeneficiaryLoginConfig(config?.beneficiaryLoginConfig);
+  const [benLoginTitle, setBenLoginTitle] = useState(initialBenCfg.title);
+  const [benLoginSubtitle, setBenLoginSubtitle] = useState(initialBenCfg.subtitle);
+  const [benLoginWelcomeNote, setBenLoginWelcomeNote] = useState(initialBenCfg.welcomeNote);
+  const [benLoginPhoneLabel, setBenLoginPhoneLabel] = useState(initialBenCfg.phoneLabel);
+  const [benLoginPhoneHelperText, setBenLoginPhoneHelperText] = useState(
+    initialBenCfg.phoneHelperText
+  );
+  const [benLoginSubmitBtn, setBenLoginSubmitBtn] = useState(initialBenCfg.submitButtonText);
+  const [benLoginVerifyBtn, setBenLoginVerifyBtn] = useState(initialBenCfg.verifyButtonText);
+  const [benLoginFooterText, setBenLoginFooterText] = useState(initialBenCfg.footerText);
+  const [benLoginTheme, setBenLoginTheme] = useState(initialBenCfg.theme);
+  const [benLoginBgDataUrl, setBenLoginBgDataUrl] = useState<string | null>(
+    initialBenCfg.bgDataUrl
+  );
+  const [benLoginShowLogo, setBenLoginShowLogo] = useState(initialBenCfg.showLogo);
+  const [benLoginShowSupportPhone, setBenLoginShowSupportPhone] = useState(
+    initialBenCfg.showSupportPhone
+  );
+  const [savingBenLoginCfg, setSavingBenLoginCfg] = useState(false);
+  const [benLoginCfgSuccess, setBenLoginCfgSuccess] = useState(false);
+  const [benLoginCfgError, setBenLoginCfgError] = useState('');
+
+  React.useEffect(() => {
+    const parsed = parseBeneficiaryLoginConfig(config?.beneficiaryLoginConfig);
+    setBenLoginTitle(parsed.title);
+    setBenLoginSubtitle(parsed.subtitle);
+    setBenLoginWelcomeNote(parsed.welcomeNote);
+    setBenLoginPhoneLabel(parsed.phoneLabel);
+    setBenLoginPhoneHelperText(parsed.phoneHelperText);
+    setBenLoginSubmitBtn(parsed.submitButtonText);
+    setBenLoginVerifyBtn(parsed.verifyButtonText);
+    setBenLoginFooterText(parsed.footerText);
+    setBenLoginTheme(parsed.theme);
+    setBenLoginBgDataUrl(parsed.bgDataUrl);
+    setBenLoginShowLogo(parsed.showLogo);
+    setBenLoginShowSupportPhone(parsed.showSupportPhone);
+  }, [config?.beneficiaryLoginConfig]);
 
   const cleanSlugPreview = (raw: string, fallback: string) =>
     raw
@@ -262,6 +310,67 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     } finally {
       setSavingLoginCfg(false);
     }
+  };
+
+  const handleBenLoginBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setBenLoginBgDataUrl(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSaveBeneficiaryLoginCustomization = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBenLoginCfgError('');
+    setSavingBenLoginCfg(true);
+    setBenLoginCfgSuccess(false);
+    try {
+      const payload = {
+        title: benLoginTitle.trim() || DEFAULT_BENEFICIARY_LOGIN_CONFIG.title,
+        subtitle: benLoginSubtitle.trim(),
+        welcomeNote: benLoginWelcomeNote.trim(),
+        phoneLabel: benLoginPhoneLabel.trim() || DEFAULT_BENEFICIARY_LOGIN_CONFIG.phoneLabel,
+        phoneHelperText: benLoginPhoneHelperText.trim(),
+        submitButtonText:
+          benLoginSubmitBtn.trim() || DEFAULT_BENEFICIARY_LOGIN_CONFIG.submitButtonText,
+        verifyButtonText:
+          benLoginVerifyBtn.trim() || DEFAULT_BENEFICIARY_LOGIN_CONFIG.verifyButtonText,
+        footerText: benLoginFooterText.trim(),
+        theme: benLoginTheme,
+        bgDataUrl: benLoginBgDataUrl,
+        showLogo: benLoginShowLogo,
+        showSupportPhone: benLoginShowSupportPhone,
+      };
+      const updated = await api.updateConfig({
+        beneficiaryLoginConfig: JSON.stringify(payload),
+      });
+      onConfigUpdated(updated);
+      setBenLoginCfgSuccess(true);
+      setTimeout(() => setBenLoginCfgSuccess(false), 3500);
+    } catch (err: any) {
+      setBenLoginCfgError(err?.message || 'خطا در ذخیره تنظیمات صفحه ورود مددجو');
+    } finally {
+      setSavingBenLoginCfg(false);
+    }
+  };
+
+  const handleResetBeneficiaryLoginDefaults = () => {
+    setBenLoginTitle(DEFAULT_BENEFICIARY_LOGIN_CONFIG.title);
+    setBenLoginSubtitle(DEFAULT_BENEFICIARY_LOGIN_CONFIG.subtitle);
+    setBenLoginWelcomeNote(DEFAULT_BENEFICIARY_LOGIN_CONFIG.welcomeNote);
+    setBenLoginPhoneLabel(DEFAULT_BENEFICIARY_LOGIN_CONFIG.phoneLabel);
+    setBenLoginPhoneHelperText(DEFAULT_BENEFICIARY_LOGIN_CONFIG.phoneHelperText);
+    setBenLoginSubmitBtn(DEFAULT_BENEFICIARY_LOGIN_CONFIG.submitButtonText);
+    setBenLoginVerifyBtn(DEFAULT_BENEFICIARY_LOGIN_CONFIG.verifyButtonText);
+    setBenLoginFooterText(DEFAULT_BENEFICIARY_LOGIN_CONFIG.footerText);
+    setBenLoginTheme(DEFAULT_BENEFICIARY_LOGIN_CONFIG.theme);
+    setBenLoginBgDataUrl(DEFAULT_BENEFICIARY_LOGIN_CONFIG.bgDataUrl);
+    setBenLoginShowLogo(DEFAULT_BENEFICIARY_LOGIN_CONFIG.showLogo);
+    setBenLoginShowSupportPhone(DEFAULT_BENEFICIARY_LOGIN_CONFIG.showSupportPhone);
   };
 
   const handleResetLoginDefaults = () => {
@@ -778,46 +887,425 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         onOpenSmsTab={onOpenSmsTab}
       />
 
-      {/* Login Page Customization Section */}
+      {/* Login Pages Customization Section (Beneficiary Login & Staff Login) */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-2.5">
             <Palette className="w-5 h-5 text-emerald-600" />
             <div>
               <h3 className="font-bold text-base text-slate-900">
-                شخصی‌سازی ظاهر و امکانات صفحه ورود (Login)
+                شخصی‌سازی ظاهر و متن‌های صفحات ورود (مددجو و کادر)
               </h3>
               <p className="text-xs text-slate-500">
-                متن‌ها، رنگ‌بندی، تصویر پس‌زمینه، نمایش لوگو و روش‌های مجاز ورود کادر را سفارشی کنید.
+                متن‌ها، رنگ‌بندی، تصویر پس‌زمینه، لوگو و امکانات صفحه ورود مددجویان (صفحه اصلی) و صفحه ورود کادر را جداگانه ویرایش کنید.
               </p>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={handleResetLoginDefaults}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition self-start sm:self-center"
+            onClick={
+              loginEditorTab === 'beneficiary'
+                ? handleResetBeneficiaryLoginDefaults
+                : handleResetLoginDefaults
+            }
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition self-start sm:self-center cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>بازگردانی به پیش‌فرض</span>
           </button>
         </div>
 
-        {loginCfgSuccess && (
-          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>تنظیمات صفحه ورود با موفقیت ذخیره شد و فوراً اعمال گردید.</span>
-          </div>
-        )}
+        {/* Sub-Tabs: Beneficiary Login vs Staff Login */}
+        <div className="flex flex-wrap items-center gap-2 bg-slate-100 p-1.5 rounded-2xl w-fit">
+          <button
+            type="button"
+            onClick={() => setLoginEditorTab('beneficiary')}
+            className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+              loginEditorTab === 'beneficiary'
+                ? 'bg-white text-emerald-800 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <UserCheck className="w-4 h-4 text-teal-600" />
+            <span>صفحه ورود مددجو (صفحه اصلی)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setLoginEditorTab('staff')}
+            className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+              loginEditorTab === 'staff'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <span>صفحه ورود کادر و مدیریت</span>
+          </button>
+        </div>
 
-        {loginCfgError && (
-          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>{loginCfgError}</span>
-          </div>
-        )}
+        {loginEditorTab === 'beneficiary' ? (
+          <>
+            {benLoginCfgSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>تنظیمات صفحه ورود مددجو با موفقیت ذخیره شد و فوراً در صفحه اصلی اعمال گردید.</span>
+              </div>
+            )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 items-start">
+            {benLoginCfgError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{benLoginCfgError}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 items-start">
+              {/* Beneficiary Login Customization Form (3 Cols) */}
+              <form
+                onSubmit={handleSaveBeneficiaryLoginCustomization}
+                className="lg:col-span-3 space-y-4 text-xs"
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      تیتر اصلی کارت ورود مددجو
+                    </label>
+                    <input
+                      type="text"
+                      value={benLoginTitle}
+                      onChange={(e) => setBenLoginTitle(e.target.value)}
+                      placeholder="ورود به پروفایل اختصاصی مددجو"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500 font-semibold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      عنوان فیلد شماره همراه
+                    </label>
+                    <input
+                      type="text"
+                      value={benLoginPhoneLabel}
+                      onChange={(e) => setBenLoginPhoneLabel(e.target.value)}
+                      placeholder="شماره همراه"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    زیرعنوان / توضیح زیر تیتر (اختیاری)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={benLoginSubtitle}
+                    onChange={(e) => setBenLoginSubtitle(e.target.value)}
+                    placeholder={`پیش‌فرض: ${instName} — تکمیل و ویرایش فرم‌ها، بارگذاری مدارک و مشاهده پیغام کارشناسان`}
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    پیام خوشامدگویی یا اطلاعیه بالای فرم (اختیاری)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={benLoginWelcomeNote}
+                    onChange={(e) => setBenLoginWelcomeNote(e.target.value)}
+                    placeholder="مثال: مددجویان گرامی، جهت پیگیری پرونده یا تکمیل مدارک با شماره موبایل ثبت‌شده وارد شوید."
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    متن راهنمای زیر کادر شماره موبایل
+                  </label>
+                  <input
+                    type="text"
+                    value={benLoginPhoneHelperText}
+                    onChange={(e) => setBenLoginPhoneHelperText(e.target.value)}
+                    placeholder="پس از وارد کردن شماره همراه، یک کد تایید یک‌بارمصرف به گوشی شما پیامک می‌شود."
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      متن دکمه ارسال کد تایید
+                    </label>
+                    <input
+                      type="text"
+                      value={benLoginSubmitBtn}
+                      onChange={(e) => setBenLoginSubmitBtn(e.target.value)}
+                      placeholder="ارسال کد تایید به شماره همراه"
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      متن دکمه تایید کد و ورود
+                    </label>
+                    <input
+                      type="text"
+                      value={benLoginVerifyBtn}
+                      onChange={(e) => setBenLoginVerifyBtn(e.target.value)}
+                      placeholder="تایید و ورود به پروفایل مددجو"
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    متن پاورقی پایین کارت ورود (اختیاری)
+                  </label>
+                  <input
+                    type="text"
+                    value={benLoginFooterText}
+                    onChange={(e) => setBenLoginFooterText(e.target.value)}
+                    placeholder="مثال: تمامی اطلاعات شما با حفظ کامل محرمانگی نزد واحد مددکاری محفوظ است."
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                {/* Theme Selector */}
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-2">
+                    تم رنگی صفحه ورود مددجو
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.values(LOGIN_THEMES).map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setBenLoginTheme(t.id)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold transition cursor-pointer ${
+                          benLoginTheme === t.id
+                            ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                            : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <span
+                          className={`w-3.5 h-3.5 rounded-full ${t.swatch} border border-white/50`}
+                        />
+                        <span>{t.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Optional Background Image */}
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-16 h-12 rounded-xl border border-slate-300 bg-white overflow-hidden flex items-center justify-center shrink-0">
+                      {benLoginBgDataUrl ? (
+                        <img
+                          src={benLoginBgDataUrl}
+                          alt="پس‌زمینه ورود مددجو"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <Image className="w-5 h-5 text-slate-400" />
+                      )}
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-800 block">
+                        تصویر پس‌زمینه صفحه ورود مددجو (اختیاری)
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        در صورت بارگذاری، با لایه تیره ملایم در پس‌زمینه کارت ورود نمایش داده می‌شود
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <label className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl cursor-pointer font-semibold shadow-sm transition">
+                      <Upload className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>انتخاب تصویر</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleBenLoginBgUpload}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {benLoginBgDataUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setBenLoginBgDataUrl(null)}
+                        className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl border border-rose-200 transition cursor-pointer"
+                        title="حذف تصویر پس‌زمینه"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Options Checkboxes */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <label className="flex items-center gap-2 p-2.5 rounded-xl border border-slate-200 bg-slate-50/70 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={benLoginShowLogo}
+                      onChange={(e) => setBenLoginShowLogo(e.target.checked)}
+                      className="rounded text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span className="font-medium text-slate-700">
+                      نمایش لوگوی مؤسسه در کارت ورود مددجو
+                    </span>
+                  </label>
+
+                  <label className="flex items-center gap-2 p-2.5 rounded-xl border border-slate-200 bg-slate-50/70 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={benLoginShowSupportPhone}
+                      onChange={(e) => setBenLoginShowSupportPhone(e.target.checked)}
+                      className="rounded text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span className="font-medium text-slate-700">
+                      نمایش شماره تلفن پشتیبانی در پایین کارت
+                    </span>
+                  </label>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    disabled={savingBenLoginCfg}
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow transition cursor-pointer disabled:opacity-50"
+                  >
+                    {savingBenLoginCfg ? 'در حال ذخیره...' : 'ذخیره تنظیمات صفحه ورود مددجو'}
+                  </button>
+                </div>
+              </form>
+
+              {/* Live Mini Preview for Beneficiary Login (2 Cols) */}
+              <div className="lg:col-span-2 space-y-2">
+                <span className="text-xs font-bold text-slate-700 block">
+                  پیش‌نمایش زنده صفحه ورود مددجو:
+                </span>
+                {(() => {
+                  const previewTheme = getLoginTheme(benLoginTheme);
+                  return (
+                    <div
+                      className={`relative rounded-2xl border border-slate-200 p-5 overflow-hidden flex items-center justify-center min-h-[380px] ${
+                        benLoginBgDataUrl ? 'bg-slate-900' : 'bg-slate-100'
+                      }`}
+                    >
+                      {benLoginBgDataUrl && (
+                        <>
+                          <img
+                            src={benLoginBgDataUrl}
+                            alt="پیش‌نمایش پس‌زمینه مددجو"
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-slate-950/55" />
+                        </>
+                      )}
+
+                      <div className="relative z-10 w-full max-w-[275px] bg-white/95 rounded-2xl shadow-lg border border-slate-200/80 p-5 space-y-3.5 text-center">
+                        {benLoginShowLogo && logoDataUrl ? (
+                          <div className="w-11 h-11 rounded-xl mx-auto overflow-hidden border border-slate-200 shadow bg-white p-0.5">
+                            <img
+                              src={logoDataUrl}
+                              alt="لوگو"
+                              className="w-full h-full object-cover rounded-[10px]"
+                            />
+                          </div>
+                        ) : (
+                          <div
+                            className={`w-11 h-11 bg-gradient-to-tr ${previewTheme.iconBox} rounded-xl mx-auto flex items-center justify-center text-white shadow`}
+                          >
+                            <UserCheck className="w-6 h-6" />
+                          </div>
+                        )}
+
+                        <div>
+                          <h4 className="text-sm font-black text-slate-900 truncate">
+                            {benLoginTitle || DEFAULT_BENEFICIARY_LOGIN_CONFIG.title}
+                          </h4>
+                          <p className="text-[10px] text-slate-500 line-clamp-2 mt-0.5 leading-relaxed">
+                            {benLoginSubtitle.trim() ||
+                              `${instName} — تکمیل و ویرایش فرم‌ها، بارگذاری مدارک و مشاهده پیغام کارشناسان`}
+                          </p>
+                        </div>
+
+                        {benLoginWelcomeNote.trim() && (
+                          <div
+                            className={`p-2 rounded-lg border text-[10px] text-right flex items-start gap-1.5 ${previewTheme.welcomeBox}`}
+                          >
+                            <Info className="w-3 h-3 shrink-0 mt-0.5" />
+                            <span className="line-clamp-2">{benLoginWelcomeNote}</span>
+                          </div>
+                        )}
+
+                        <div className="space-y-1.5 text-right">
+                          <span className="block text-[10px] font-semibold text-slate-700">
+                            {benLoginPhoneLabel || 'شماره همراه'}
+                          </span>
+                          <div className="h-7 rounded-lg border border-slate-200 bg-slate-50 px-2 flex items-center justify-between text-[10px] text-slate-400">
+                            <Smartphone className="w-3 h-3" />
+                            <span className="font-mono">09123456789</span>
+                          </div>
+                          {benLoginPhoneHelperText.trim() && (
+                            <p className="text-[9px] text-slate-400 line-clamp-2 leading-relaxed">
+                              {benLoginPhoneHelperText}
+                            </p>
+                          )}
+                          <div
+                            className={`h-8 rounded-lg bg-gradient-to-r ${previewTheme.button} text-white text-[10px] font-bold flex items-center justify-center shadow-sm px-2 truncate`}
+                          >
+                            {benLoginSubmitBtn ||
+                              DEFAULT_BENEFICIARY_LOGIN_CONFIG.submitButtonText}
+                          </div>
+                        </div>
+
+                        {(benLoginFooterText.trim() || (benLoginShowSupportPhone && phone)) && (
+                          <div className="pt-2 border-t border-slate-100 space-y-0.5">
+                            {benLoginFooterText.trim() && (
+                              <div className="text-[9px] text-slate-400 truncate">
+                                {benLoginFooterText}
+                              </div>
+                            )}
+                            {benLoginShowSupportPhone && phone && (
+                              <div className="text-[10px] font-mono font-bold text-slate-600 dir-ltr">
+                                {phone}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            {loginCfgSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>تنظیمات صفحه ورود کادر با موفقیت ذخیره شد و فوراً اعمال گردید.</span>
+              </div>
+            )}
+
+            {loginCfgError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{loginCfgError}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 items-start">
           {/* Customization Form (3 Cols) */}
           <form onSubmit={handleSaveLoginCustomization} className="lg:col-span-3 space-y-4 text-xs">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1096,6 +1584,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
             })()}
           </div>
         </div>
+          </>
+        )}
       </div>
 
       {/* Shortcut Card: Public Form Customization moved to Form Builder */}

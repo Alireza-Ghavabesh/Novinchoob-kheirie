@@ -163,6 +163,10 @@ async function ensureDatabaseSchema(): Promise<void> {
       { table: 'AppConfig', column: 'adminLoginSlug', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "adminLoginSlug" TEXT NOT NULL DEFAULT 'admin-portal'` },
       { table: 'AppConfig', column: 'beneficiaryLoginSlug', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "beneficiaryLoginSlug" TEXT NOT NULL DEFAULT 'beneficiary'` },
       { table: 'AppConfig', column: 'hideAdminLoginButton', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "hideAdminLoginButton" BOOLEAN NOT NULL DEFAULT true` },
+      { table: 'AppConfig', column: 'beneficiaryLoginConfig', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "beneficiaryLoginConfig" TEXT NOT NULL DEFAULT ''` },
+      { table: 'AppConfig', column: 'programFormConfig', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "programFormConfig" TEXT NOT NULL DEFAULT ''` },
+      { table: 'Program', column: 'customFields', ddl: `ALTER TABLE "Program" ADD COLUMN "customFields" TEXT NOT NULL DEFAULT '[]'` },
+      { table: 'Program', column: 'fieldSchema', ddl: `ALTER TABLE "Program" ADD COLUMN "fieldSchema" TEXT NOT NULL DEFAULT ''` },
       { table: 'SmsConfig', column: 'loginOtpTemplate', ddl: `ALTER TABLE "SmsConfig" ADD COLUMN "loginOtpTemplate" TEXT NOT NULL DEFAULT ''` },
       { table: 'SmsConfig', column: 'loginOtpMessage', ddl: `ALTER TABLE "SmsConfig" ADD COLUMN "loginOtpMessage" TEXT NOT NULL DEFAULT ''` },
       { table: 'User', column: 'phone', ddl: `ALTER TABLE "User" ADD COLUMN "phone" TEXT` },
@@ -865,9 +869,11 @@ app.put('/api/config', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const bodyKeys = Object.keys(req.body || {}).filter((k) => req.body[k] !== undefined);
     const isPublicFormOnly = bodyKeys.length > 0 && bodyKeys.every((k) => k === 'publicFormConfig');
+    const isProgramFormOnly = bodyKeys.length > 0 && bodyKeys.every((k) => k === 'programFormConfig');
     if (
       !userHasPerm(req.authUser, 'manageSettings') &&
-      !(isPublicFormOnly && userHasPerm(req.authUser, 'manageForms'))
+      !(isPublicFormOnly && userHasPerm(req.authUser, 'manageForms')) &&
+      !(isProgramFormOnly && (userHasPerm(req.authUser, 'createProg') || userHasPerm(req.authUser, 'decideProg')))
     ) {
       return res.status(403).json({ error: 'شما مجوز ویرایش تنظیمات سامانه را ندارید.' });
     }
@@ -893,6 +899,8 @@ app.put('/api/config', requireAuth, async (req: AuthenticatedRequest, res) => {
       'adminLoginSlug',
       'beneficiaryLoginSlug',
       'hideAdminLoginButton',
+      'beneficiaryLoginConfig',
+      'programFormConfig',
     ];
     const updateData: any = {};
     for (const key of allowedFields) {
@@ -973,7 +981,7 @@ app.get('/api/categories', async (_req, res) => {
   }
 });
 
-app.post('/api/categories/need', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.post('/api/categories/need', requireAuth, requirePerm('manageSettings', 'manageForms'), async (req, res) => {
   try {
     const { name } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'نام دسته الزامی است' });
@@ -984,7 +992,30 @@ app.post('/api/categories/need', requireAuth, requirePerm('manageSettings'), asy
   }
 });
 
-app.delete('/api/categories/need/:id', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.put('/api/categories/need/:id', requireAuth, requirePerm('manageSettings', 'manageForms'), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const nextName = String(req.body?.name || '').trim();
+    if (!nextName) return res.status(400).json({ error: 'نام جدید دسته الزامی است' });
+    const existing = await prisma.needCategory.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'دسته‌بندی مورد نظر یافت نشد' });
+    const updated = await prisma.needCategory.update({
+      where: { id },
+      data: { name: nextName },
+    });
+    if (existing.name !== nextName) {
+      await prisma.beneficiaryRequest.updateMany({
+        where: { cat: existing.name },
+        data: { cat: nextName },
+      });
+    }
+    res.json(updated);
+  } catch (error) {
+    res.status(400).json({ error: 'نام دسته‌بندی تکراری یا نامعتبر است', details: String(error) });
+  }
+});
+
+app.delete('/api/categories/need/:id', requireAuth, requirePerm('manageSettings', 'manageForms'), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await prisma.needCategory.delete({ where: { id } });
@@ -994,7 +1025,7 @@ app.delete('/api/categories/need/:id', requireAuth, requirePerm('manageSettings'
   }
 });
 
-app.post('/api/categories/program', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.post('/api/categories/program', requireAuth, requirePerm('manageSettings', 'createProg', 'decideProg'), async (req, res) => {
   try {
     const { name } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'نام دسته الزامی است' });
@@ -1005,7 +1036,30 @@ app.post('/api/categories/program', requireAuth, requirePerm('manageSettings'), 
   }
 });
 
-app.delete('/api/categories/program/:id', requireAuth, requirePerm('manageSettings'), async (req, res) => {
+app.put('/api/categories/program/:id', requireAuth, requirePerm('manageSettings', 'createProg', 'decideProg'), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const nextName = String(req.body?.name || '').trim();
+    if (!nextName) return res.status(400).json({ error: 'نام جدید دسته الزامی است' });
+    const existing = await prisma.programCategory.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'دسته‌بندی مورد نظر یافت نشد' });
+    const updated = await prisma.programCategory.update({
+      where: { id },
+      data: { name: nextName },
+    });
+    if (existing.name !== nextName) {
+      await prisma.program.updateMany({
+        where: { cat: existing.name },
+        data: { cat: nextName },
+      });
+    }
+    res.json(updated);
+  } catch (error) {
+    res.status(400).json({ error: 'نام دسته‌بندی تکراری یا نامعتبر است', details: String(error) });
+  }
+});
+
+app.delete('/api/categories/program/:id', requireAuth, requirePerm('manageSettings', 'createProg', 'decideProg'), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await prisma.programCategory.delete({ where: { id } });
@@ -1805,28 +1859,60 @@ app.post('/api/programs', requireAuth, requirePerm('createProg'), async (req, re
       desc,
       startDate,
       endDate,
+      customFields,
+      fieldSchema,
     } = req.body;
 
-    if (!title || !cat) {
-      return res.status(400).json({ error: 'عنوان و دسته‌بندی طرح الزامی است.' });
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ error: 'عنوان طرح / پروژه الزامی است.' });
     }
 
-    const program = await prisma.program.create({
-      data: {
-        title,
-        cat,
-        requestedBudget: parseFloat(requestedBudget) || 0,
-        approvedBudget: 0,
-        volunteers: parseInt(volunteers) || 0,
-        roles: roles || '',
-        desc: desc || '',
-        startDate: startDate || '',
-        endDate: endDate || '',
-        status: 'PENDING',
-        pipelineStage: 1,
-        progressPercent: 0,
-      },
-    });
+    const customFieldsStr =
+      typeof customFields === 'string'
+        ? customFields
+        : Array.isArray(customFields)
+        ? JSON.stringify(customFields)
+        : '[]';
+
+    const fieldSchemaStr =
+      typeof fieldSchema === 'string'
+        ? fieldSchema
+        : fieldSchema && typeof fieldSchema === 'object'
+        ? JSON.stringify(fieldSchema)
+        : '';
+
+    const runCreate = () =>
+      prisma.program.create({
+        data: {
+          title: String(title).trim(),
+          cat: typeof cat === 'string' ? cat.trim() : '',
+          requestedBudget: parseFloat(requestedBudget) || 0,
+          approvedBudget: 0,
+          volunteers: parseInt(volunteers) || 0,
+          roles: roles || '',
+          desc: desc || '',
+          startDate: startDate || '',
+          endDate: endDate || '',
+          customFields: customFieldsStr,
+          fieldSchema: fieldSchemaStr,
+          status: 'PENDING',
+          pipelineStage: 1,
+          progressPercent: 0,
+        },
+        include: { logs: { orderBy: { id: 'desc' } } },
+      });
+
+    let program: any;
+    try {
+      program = await runCreate();
+    } catch (err: any) {
+      if (err?.code === 'P2022' || /no such column/i.test(String(err))) {
+        await ensureDatabaseSchema();
+        program = await runCreate();
+      } else {
+        throw err;
+      }
+    }
 
     res.json(program);
   } catch (error) {
@@ -1834,7 +1920,7 @@ app.post('/api/programs', requireAuth, requirePerm('createProg'), async (req, re
   }
 });
 
-app.put('/api/programs/:id', requireAuth, requirePerm('decideProg'), async (req, res) => {
+app.put('/api/programs/:id', requireAuth, requirePerm('decideProg', 'createProg'), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const {
@@ -1852,6 +1938,8 @@ app.put('/api/programs/:id', requireAuth, requirePerm('decideProg'), async (req,
       desc,
       startDate,
       endDate,
+      customFields,
+      fieldSchema,
     } = req.body;
 
     const data: any = {};
@@ -1861,20 +1949,49 @@ app.put('/api/programs/:id', requireAuth, requirePerm('decideProg'), async (req,
     if (progressPercent !== undefined) data.progressPercent = parseInt(progressPercent) || 0;
     if (approvedDate !== undefined) data.approvedDate = approvedDate;
     if (approvedBy !== undefined) data.approvedBy = approvedBy;
-    if (title) data.title = title;
-    if (cat) data.cat = cat;
+    if (title !== undefined && String(title).trim()) data.title = String(title).trim();
+    if (cat !== undefined) data.cat = typeof cat === 'string' ? cat.trim() : '';
     if (requestedBudget !== undefined) data.requestedBudget = parseFloat(requestedBudget) || 0;
     if (volunteers !== undefined) data.volunteers = parseInt(volunteers) || 0;
     if (roles !== undefined) data.roles = roles;
     if (desc !== undefined) data.desc = desc;
     if (startDate !== undefined) data.startDate = startDate;
     if (endDate !== undefined) data.endDate = endDate;
+    if (customFields !== undefined) {
+      data.customFields =
+        typeof customFields === 'string'
+          ? customFields
+          : Array.isArray(customFields)
+          ? JSON.stringify(customFields)
+          : '[]';
+    }
+    if (fieldSchema !== undefined) {
+      data.fieldSchema =
+        typeof fieldSchema === 'string'
+          ? fieldSchema
+          : fieldSchema && typeof fieldSchema === 'object'
+          ? JSON.stringify(fieldSchema)
+          : '';
+    }
 
-    const updated = await prisma.program.update({
-      where: { id },
-      data,
-      include: { logs: { orderBy: { id: 'desc' } } },
-    });
+    const runUpdate = () =>
+      prisma.program.update({
+        where: { id },
+        data,
+        include: { logs: { orderBy: { id: 'desc' } } },
+      });
+
+    let updated: any;
+    try {
+      updated = await runUpdate();
+    } catch (err: any) {
+      if (err?.code === 'P2022' || /no such column/i.test(String(err))) {
+        await ensureDatabaseSchema();
+        updated = await runUpdate();
+      } else {
+        throw err;
+      }
+    }
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update program', details: String(error) });
@@ -2033,6 +2150,8 @@ app.post('/api/restore', requireAuth, requirePerm('manageSettings'), async (req,
           address: data.config.address,
           notice: data.config.notice,
           publicFormConfig: data.config.publicFormConfig ?? '',
+          beneficiaryLoginConfig: data.config.beneficiaryLoginConfig ?? '',
+          programFormConfig: data.config.programFormConfig ?? '',
         },
         create: {
           id: 1,
@@ -2043,6 +2162,8 @@ app.post('/api/restore', requireAuth, requirePerm('manageSettings'), async (req,
           address: data.config.address,
           notice: data.config.notice,
           publicFormConfig: data.config.publicFormConfig ?? '',
+          beneficiaryLoginConfig: data.config.beneficiaryLoginConfig ?? '',
+          programFormConfig: data.config.programFormConfig ?? '',
         },
       });
     }

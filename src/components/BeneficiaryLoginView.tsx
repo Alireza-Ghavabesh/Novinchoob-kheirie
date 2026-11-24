@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   UserCheck,
   Smartphone,
@@ -10,11 +10,13 @@ import {
   RefreshCw,
   Edit3,
   Info,
+  Phone,
 } from 'lucide-react';
 import { AppConfig, BeneficiaryAccount } from '../types';
 import { api } from '../services/api';
 import { toEnglishDigits, toPersianDigits } from '../utils/persian';
 import { useWebOtp } from '../utils/useWebOtp';
+import { getLoginTheme, parseBeneficiaryLoginConfig } from '../utils/loginThemes';
 
 interface BeneficiaryLoginViewProps {
   config: AppConfig | null;
@@ -29,6 +31,17 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
   onBackToPublic,
   isolated = false,
 }) => {
+  const pageCfg = useMemo(
+    () => parseBeneficiaryLoginConfig(config?.beneficiaryLoginConfig),
+    [config?.beneficiaryLoginConfig]
+  );
+  const theme = getLoginTheme(pageCfg.theme);
+  const instName = config?.instName || 'مؤسسه خیریه حضرت ام‌البنین (س)';
+  const subtitleText =
+    pageCfg.subtitle.trim() ||
+    `${instName} — تکمیل و ویرایش فرم‌ها، بارگذاری مدارک و مشاهده پیغام کارشناسان`;
+  const hasBgImage = Boolean(pageCfg.bgDataUrl);
+
   const [phone, setPhone] = useState('');
 
   const [otpSent, setOtpSent] = useState(false);
@@ -130,31 +143,69 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
   });
 
   return (
-    <div className="min-h-[calc(100vh-140px)] flex items-center justify-center py-10 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-emerald-50/40 to-slate-50">
-      <div className="max-w-md w-full space-y-5">
+    <div
+      className={`relative min-h-[calc(100vh-140px)] flex items-center justify-center py-10 px-4 sm:px-6 lg:px-8 overflow-hidden ${
+        hasBgImage ? 'bg-slate-900' : 'bg-gradient-to-b from-emerald-50/40 to-slate-50'
+      }`}
+    >
+      {hasBgImage && pageCfg.bgDataUrl && (
+        <>
+          <img
+            src={pageCfg.bgDataUrl}
+            alt="پس‌زمینه صفحه ورود مددجو"
+            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+          />
+          <div className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px] pointer-events-none" />
+        </>
+      )}
+
+      <div className="relative z-10 max-w-md w-full space-y-5">
         {!isolated && (
           <button
             type="button"
             onClick={onBackToPublic}
-            className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-800 hover:text-emerald-950 transition cursor-pointer"
+            className={`inline-flex items-center gap-2 text-xs font-semibold transition cursor-pointer ${
+              hasBgImage ? 'text-white/90 hover:text-white' : theme.backLink
+            }`}
           >
             <ArrowRight className="w-4 h-4" />
             <span>بازگشت به صفحه اصلی</span>
           </button>
         )}
 
-        <div className="bg-white rounded-3xl shadow-xl border border-slate-200/80 p-7 sm:p-8 space-y-6">
-          <div className="text-center space-y-2">
-            <div className="w-16 h-16 bg-gradient-to-tr from-teal-600 to-emerald-600 rounded-2xl mx-auto flex items-center justify-center text-white shadow-lg">
-              <UserCheck className="w-8 h-8" />
-            </div>
-            <h2 className="text-xl font-black text-slate-900">
-              ورود به پروفایل اختصاصی مددجو
-            </h2>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              {config?.instName || 'مؤسسه خیریه حضرت ام‌البنین (س)'} — تکمیل و ویرایش فرم‌ها، بارگذاری مدارک و مشاهده پیغام کارشناسان
-            </p>
+        <div className="bg-white/95 backdrop-blur-md rounded-3xl shadow-xl border border-slate-200/80 p-7 sm:p-8 space-y-6">
+          <div className="text-center space-y-2.5">
+            {pageCfg.showLogo && config?.logoDataUrl ? (
+              <div className="w-16 h-16 rounded-2xl mx-auto overflow-hidden border border-slate-200 shadow-lg bg-white p-1">
+                <img
+                  src={config.logoDataUrl}
+                  alt={instName}
+                  className="w-full h-full object-cover rounded-xl"
+                />
+              </div>
+            ) : (
+              <div
+                className={`w-16 h-16 bg-gradient-to-tr ${theme.iconBox} rounded-2xl mx-auto flex items-center justify-center text-white shadow-lg`}
+              >
+                <UserCheck className="w-8 h-8" />
+              </div>
+            )}
+            <h2 className="text-xl font-black text-slate-900">{pageCfg.title}</h2>
+            {subtitleText && (
+              <p className="text-xs text-slate-500 leading-relaxed whitespace-pre-line">
+                {subtitleText}
+              </p>
+            )}
           </div>
+
+          {pageCfg.welcomeNote.trim() && (
+            <div
+              className={`p-3 rounded-xl border text-xs flex items-start gap-2 leading-relaxed ${theme.welcomeBox}`}
+            >
+              <Info className="w-4 h-4 shrink-0 mt-0.5" />
+              <span className="whitespace-pre-line">{pageCfg.welcomeNote.trim()}</span>
+            </div>
+          )}
 
           {error && (
             <div className="p-3 bg-rose-50 border-r-4 border-rose-500 rounded-xl text-rose-700 text-xs flex items-start gap-2 leading-relaxed">
@@ -174,7 +225,9 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs flex items-start gap-2">
               <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div>
-                <span className="font-bold block">پیش‌نمایش کد تایید (سرویس پیامک پیکربندی نشده):</span>
+                <span className="font-bold block">
+                  پیش‌نمایش کد تایید (سرویس پیامک پیکربندی نشده):
+                </span>
                 <span className="font-mono font-black text-sm tracking-widest mt-1 inline-block">
                   {simulatedCode}
                 </span>
@@ -186,7 +239,7 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
             <form onSubmit={handleSendOtp} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  شماره همراه <span className="text-rose-500">*</span>
+                  {pageCfg.phoneLabel} <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
                   <input
@@ -197,26 +250,28 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="09123456789"
-                    className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm outline-none transition font-mono text-left"
+                    className={`w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-slate-300 focus:ring-2 ${theme.focusRing} text-sm outline-none transition font-mono text-left`}
                   />
                   <Smartphone className="w-4 h-4 text-slate-400 absolute right-3.5 top-3.5" />
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
-                  پس از وارد کردن شماره همراه، یک کد تایید یک‌بارمصرف به گوشی شما پیامک می‌شود.
-                </p>
+                {pageCfg.phoneHelperText.trim() && (
+                  <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
+                    {pageCfg.phoneHelperText}
+                  </p>
+                )}
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-sm"
+                className={`w-full py-3 bg-gradient-to-r ${theme.button} text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-sm`}
               >
                 {loading ? (
                   <span>در حال ارسال کد تایید...</span>
                 ) : (
                   <>
                     <MessageSquareCode className="w-4 h-4" />
-                    <span>ارسال کد تایید به شماره همراه</span>
+                    <span>{pageCfg.submitButtonText}</span>
                   </>
                 )}
               </button>
@@ -225,7 +280,7 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between gap-2 text-xs">
                 <div>
-                  <span className="text-slate-500 block text-[11px]">شماره همراه:</span>
+                  <span className="text-slate-500 block text-[11px]">{pageCfg.phoneLabel}:</span>
                   <span className="font-mono font-bold text-slate-800 dir-ltr inline-block mt-0.5">
                     {maskedPhone}
                   </span>
@@ -239,7 +294,7 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
                     setInfoMsg('');
                     setSimulatedCode('');
                   }}
-                  className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-900 font-semibold cursor-pointer"
+                  className={`inline-flex items-center gap-1 font-semibold cursor-pointer ${theme.linkText}`}
                 >
                   <Edit3 className="w-3.5 h-3.5" />
                   <span>تغییر شماره</span>
@@ -260,7 +315,7 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
                       type="button"
                       onClick={() => handleSendOtp()}
                       disabled={loading}
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                      className={`inline-flex items-center gap-1 text-[11px] font-bold cursor-pointer ${theme.linkText}`}
                     >
                       <RefreshCw className="w-3 h-3" />
                       <span>ارسال مجدد کد</span>
@@ -277,7 +332,7 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value)}
                   placeholder="------"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-lg font-mono font-bold tracking-[0.4em] text-center outline-none transition dir-ltr"
+                  className={`w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 ${theme.focusRing} text-lg font-mono font-bold tracking-[0.4em] text-center outline-none transition dir-ltr`}
                 />
                 {webOtpSupported && Boolean(config?.appDomain) && (
                   <p className="text-[11px] text-emerald-700 mt-1.5 text-center">
@@ -289,18 +344,34 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-sm"
+                className={`w-full py-3 bg-gradient-to-r ${theme.button} text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-sm`}
               >
                 {loading ? (
                   <span>در حال تایید کد...</span>
                 ) : (
                   <>
                     <LogIn className="w-4 h-4" />
-                    <span>تایید و ورود به پروفایل مددجو</span>
+                    <span>{pageCfg.verifyButtonText}</span>
                   </>
                 )}
               </button>
             </form>
+          )}
+
+          {(pageCfg.footerText.trim() || (pageCfg.showSupportPhone && config?.phone)) && (
+            <div className="pt-4 border-t border-slate-100 text-center space-y-1.5">
+              {pageCfg.footerText.trim() && (
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  {pageCfg.footerText.trim()}
+                </p>
+              )}
+              {pageCfg.showSupportPhone && config?.phone && (
+                <div className="inline-flex items-center justify-center gap-1.5 text-xs font-bold text-slate-600 dir-ltr">
+                  <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>{config.phone}</span>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

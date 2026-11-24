@@ -21,6 +21,8 @@ export interface AppConfig {
   adminLoginSlug?: string;
   beneficiaryLoginSlug?: string;
   hideAdminLoginButton?: boolean;
+  beneficiaryLoginConfig?: string;
+  programFormConfig?: string;
 }
 
 export interface Category {
@@ -77,6 +79,8 @@ export interface Program {
   progressPercent: number; // 0 to 100
   approvedDate?: string | null;
   approvedBy?: string | null;
+  customFields?: string | null;
+  fieldSchema?: string | null;
   logs: ProgramLog[];
   createdAt: string;
   updatedAt: string;

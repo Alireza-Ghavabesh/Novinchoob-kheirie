@@ -60,6 +60,7 @@ interface FormsTabProps {
   needCategories: Category[];
   entities: EntityDefinition[];
   onRefreshEntities: () => void;
+  onRefreshCategories: () => void;
   onConfigUpdated: (config: AppConfig) => void;
 }
 
@@ -77,6 +78,7 @@ export const FormsTab: React.FC<FormsTabProps> = ({
   needCategories,
   entities,
   onRefreshEntities,
+  onRefreshCategories,
   onConfigUpdated,
 }) => {
   const canManageForms = !currentUser || hasPermission(currentUser, 'manageForms');
@@ -578,8 +580,10 @@ export const FormsTab: React.FC<FormsTabProps> = ({
 
           <PublicFormBuilderSection
             config={config}
+            needCategories={needCategories}
             entities={entities}
             onConfigUpdated={onConfigUpdated}
+            onRefreshCategories={onRefreshCategories}
             onOpenEntitiesTab={() => {
               setEditingPublicForm(false);
               setSubTab('entities');

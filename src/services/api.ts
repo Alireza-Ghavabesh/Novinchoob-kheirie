@@ -186,6 +186,14 @@ export const api = {
     });
     return parseJsonOrThrow<Category>(res, 'خطا در ثبت دسته نیاز');
   },
+  updateNeedCategory: async (id: number, name: string): Promise<Category> => {
+    const res = await authFetch(`/api/categories/need/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    return parseJsonOrThrow<Category>(res, 'خطا در ویرایش دسته نیاز');
+  },
   deleteNeedCategory: async (id: number): Promise<void> => {
     const res = await authFetch(`/api/categories/need/${id}`, { method: 'DELETE' });
     await parseJsonOrThrow(res, 'خطا در حذف دسته‌بندی');
@@ -197,6 +205,14 @@ export const api = {
       body: JSON.stringify({ name }),
     });
     return parseJsonOrThrow<Category>(res, 'خطا در ثبت دسته طرح');
+  },
+  updateProgramCategory: async (id: number, name: string): Promise<Category> => {
+    const res = await authFetch(`/api/categories/program/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    return parseJsonOrThrow<Category>(res, 'خطا در ویرایش دسته طرح');
   },
   deleteProgramCategory: async (id: number): Promise<void> => {
     const res = await authFetch(`/api/categories/program/${id}`, { method: 'DELETE' });

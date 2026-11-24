@@ -77,3 +77,76 @@ export const LOGIN_THEMES: Record<string, LoginThemeConfig> = {
 export function getLoginTheme(themeId?: string | null): LoginThemeConfig {
   return LOGIN_THEMES[themeId || 'emerald'] || LOGIN_THEMES.emerald;
 }
+
+export interface BeneficiaryLoginPageConfig {
+  title: string;
+  subtitle: string;
+  welcomeNote: string;
+  phoneLabel: string;
+  phoneHelperText: string;
+  submitButtonText: string;
+  verifyButtonText: string;
+  footerText: string;
+  theme: 'emerald' | 'teal' | 'slate' | 'amber' | 'indigo' | string;
+  bgDataUrl: string | null;
+  showLogo: boolean;
+  showSupportPhone: boolean;
+}
+
+export const DEFAULT_BENEFICIARY_LOGIN_CONFIG: BeneficiaryLoginPageConfig = {
+  title: 'ورود به پروفایل اختصاصی مددجو',
+  subtitle: '',
+  welcomeNote: '',
+  phoneLabel: 'شماره همراه',
+  phoneHelperText: 'پس از وارد کردن شماره همراه، یک کد تایید یک‌بارمصرف به گوشی شما پیامک می‌شود.',
+  submitButtonText: 'ارسال کد تایید به شماره همراه',
+  verifyButtonText: 'تایید و ورود به پروفایل مددجو',
+  footerText: '',
+  theme: 'emerald',
+  bgDataUrl: null,
+  showLogo: true,
+  showSupportPhone: false,
+};
+
+export function parseBeneficiaryLoginConfig(raw?: string | null): BeneficiaryLoginPageConfig {
+  if (!raw || !raw.trim()) {
+    return { ...DEFAULT_BENEFICIARY_LOGIN_CONFIG };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      title:
+        typeof parsed?.title === 'string' && parsed.title.trim()
+          ? parsed.title.trim()
+          : DEFAULT_BENEFICIARY_LOGIN_CONFIG.title,
+      subtitle: typeof parsed?.subtitle === 'string' ? parsed.subtitle : '',
+      welcomeNote: typeof parsed?.welcomeNote === 'string' ? parsed.welcomeNote : '',
+      phoneLabel:
+        typeof parsed?.phoneLabel === 'string' && parsed.phoneLabel.trim()
+          ? parsed.phoneLabel.trim()
+          : DEFAULT_BENEFICIARY_LOGIN_CONFIG.phoneLabel,
+      phoneHelperText:
+        typeof parsed?.phoneHelperText === 'string'
+          ? parsed.phoneHelperText
+          : DEFAULT_BENEFICIARY_LOGIN_CONFIG.phoneHelperText,
+      submitButtonText:
+        typeof parsed?.submitButtonText === 'string' && parsed.submitButtonText.trim()
+          ? parsed.submitButtonText.trim()
+          : DEFAULT_BENEFICIARY_LOGIN_CONFIG.submitButtonText,
+      verifyButtonText:
+        typeof parsed?.verifyButtonText === 'string' && parsed.verifyButtonText.trim()
+          ? parsed.verifyButtonText.trim()
+          : DEFAULT_BENEFICIARY_LOGIN_CONFIG.verifyButtonText,
+      footerText: typeof parsed?.footerText === 'string' ? parsed.footerText : '',
+      theme:
+        typeof parsed?.theme === 'string' && LOGIN_THEMES[parsed.theme]
+          ? parsed.theme
+          : DEFAULT_BENEFICIARY_LOGIN_CONFIG.theme,
+      bgDataUrl: typeof parsed?.bgDataUrl === 'string' && parsed.bgDataUrl ? parsed.bgDataUrl : null,
+      showLogo: parsed?.showLogo !== false,
+      showSupportPhone: Boolean(parsed?.showSupportPhone),
+    };
+  } catch {
+    return { ...DEFAULT_BENEFICIARY_LOGIN_CONFIG };
+  }
+}

@@ -352,7 +352,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             programs={programs}
             programCategories={programCategories}
             currentUser={currentUser}
+            config={config}
+            entities={entities}
             onRefresh={onRefreshPrograms}
+            onRefreshCategories={onRefreshCategories}
+            onConfigUpdated={onConfigUpdated}
+            onOpenFormBuilder={canForms ? () => setActiveTab('forms') : undefined}
           />
         )}
 
@@ -380,6 +385,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             needCategories={needCategories}
             entities={entities}
             onRefreshEntities={onRefreshEntities}
+            onRefreshCategories={onRefreshCategories}
             onConfigUpdated={onConfigUpdated}
           />
         )}
