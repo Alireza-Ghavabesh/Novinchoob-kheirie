@@ -28,6 +28,7 @@ import {
   BeneficiaryPortalFormItem,
   BeneficiaryRequest,
   Category,
+  LoginPortal,
 } from '../types';
 import {
   CUSTOM_FORM_STATUS_LABELS,
@@ -54,6 +55,7 @@ import { ShamsiDatePicker } from './ShamsiDatePicker';
 interface BeneficiaryPortalViewProps {
   beneficiary: BeneficiaryAccount;
   config: AppConfig | null;
+  portal?: LoginPortal | null;
   needCategories?: Category[];
   entities: EntityDefinition[];
   onLogout: () => void;
@@ -83,12 +85,16 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
 export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
   beneficiary,
   config,
+  portal = null,
   needCategories = [],
   entities,
   onLogout,
   onBackToPublic,
   isolated = false,
 }) => {
+  const getItemKey = (item: BeneficiaryPortalFormItem) =>
+    item.programId ? `prog-${item.programId}-${item.form.id}` : item.form.id;
+
   const publicFormSchema = useMemo(
     () => parsePublicFormSchema(config?.publicFormConfig),
     [config?.publicFormConfig]
@@ -216,7 +222,7 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
     setLoading(true);
     setLoadError('');
     try {
-      const data = await api.getBeneficiaryPortal();
+      const data = await api.getBeneficiaryPortal(portal?.slug);
       const activeAcc = data.beneficiary || beneficiary;
       if (data.beneficiary) setAccount(data.beneficiary);
       const list = Array.isArray(data.items) ? data.items : [];
@@ -232,19 +238,20 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
       const initialValues: Record<string, DynamicFormValuesMap> = {};
       const initialExpanded: Record<string, boolean> = {};
       for (const item of list) {
-        initialValues[item.form.id] = item.submission
+        const key = item.programId ? `prog-${item.programId}-${item.form.id}` : item.form.id;
+        initialValues[key] = item.submission
           ? hydrateValuesFromSubmission(item.form.fields, item.submission.data, entities)
           : {};
-        initialExpanded[item.form.id] = true;
+        initialExpanded[key] = true;
       }
       setValuesByForm(initialValues);
       setExpandedForms((prev) => ({ ...initialExpanded, ...prev }));
     } catch (err: any) {
-      setLoadError(err.message || 'خطا در دریافت فرم‌های پروفایل مددجو');
+      setLoadError(err.message || 'خطا در دریافت فرم‌های پروفایل');
     } finally {
       setLoading(false);
     }
-  }, [beneficiary, entities, hydratePublicForm]);
+  }, [beneficiary, entities, hydratePublicForm, portal?.slug]);
 
   useEffect(() => {
     loadPortal();
@@ -515,31 +522,35 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
   ) => {
     e.preventDefault();
     const formId = item.form.id;
-    setErrorByForm((prev) => ({ ...prev, [formId]: '' }));
-    setSuccessByForm((prev) => ({ ...prev, [formId]: '' }));
+    const itemKey = getItemKey(item);
+    setErrorByForm((prev) => ({ ...prev, [itemKey]: '' }));
+    setSuccessByForm((prev) => ({ ...prev, [itemKey]: '' }));
 
-    const currentValues = valuesByForm[formId] || {};
+    const currentValues = valuesByForm[itemKey] || {};
     const extracted = validateAndExtractCustomFields(item.form.fields, currentValues, entities);
     if (extracted.error) {
-      setErrorByForm((prev) => ({ ...prev, [formId]: extracted.error! }));
+      setErrorByForm((prev) => ({ ...prev, [itemKey]: extracted.error! }));
       showToast('error', 'لطفاً فیلدهای الزامی را تکمیل نمایید', extracted.error);
       return;
     }
 
     const isEdit = Boolean(item.submission);
-    setSubmittingFormId(formId);
+    setSubmittingFormId(itemKey);
     try {
-      const savedSub = await api.submitBeneficiaryForm(formId, extracted.values, isEdit);
+      const savedSub = await api.submitBeneficiaryForm(formId, extracted.values, isEdit, {
+        portalId: portal?.id || null,
+        programId: item.programId || null,
+      });
       setItems((prev) =>
-        prev.map((it) => (it.form.id === formId ? { ...it, submission: savedSub } : it))
+        prev.map((it) => (getItemKey(it) === itemKey ? { ...it, submission: savedSub } : it))
       );
       setValuesByForm((prev) => ({
         ...prev,
-        [formId]: hydrateValuesFromSubmission(item.form.fields, savedSub.data, entities),
+        [itemKey]: hydrateValuesFromSubmission(item.form.fields, savedSub.data, entities),
       }));
       setSuccessByForm((prev) => ({
         ...prev,
-        [formId]: isEdit
+        [itemKey]: isEdit
           ? `ویرایش اطلاعات شما با موفقیت ثبت شد (کد پیگیری: ${savedSub.trackingCode}).`
           : `${item.form.successMessage || 'اطلاعات شما با موفقیت ثبت شد.'} — کد پیگیری: ${savedSub.trackingCode}`,
       }));
@@ -554,7 +565,7 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
       const msg = err.message || 'خطا در ثبت اطلاعات فرم';
       setErrorByForm((prev) => ({
         ...prev,
-        [formId]: msg,
+        [itemKey]: msg,
       }));
       showToast('error', `خطا در ذخیره فرم «${item.form.title}»`, msg);
     } finally {
@@ -562,9 +573,13 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
     }
   };
 
-  const scrollToForm = (formId: string) => {
-    setExpandedForms((prev) => ({ ...prev, [formId]: true }));
-    const el = document.getElementById(`portal-form-${formId}`);
+  const scrollToForm = (targetKeyOrFormId: string) => {
+    const matched = items.find(
+      (it) => getItemKey(it) === targetKeyOrFormId || it.form.id === targetKeyOrFormId
+    );
+    const key = matched ? getItemKey(matched) : targetKeyOrFormId;
+    setExpandedForms((prev) => ({ ...prev, [key]: true }));
+    const el = document.getElementById(`portal-form-${key}`);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -860,13 +875,20 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
             </div>
             <div className="space-y-1">
               <span className="text-[11px] text-emerald-200 font-semibold block">
-                پروفایل اختصاصی مددجو — {config?.instName || 'مؤسسه خیریه'}
+                {portal
+                  ? `${portal.title} — ${config?.instName || 'مؤسسه خیریه'}`
+                  : `پروفایل اختصاصی مددجو — ${config?.instName || 'مؤسسه خیریه'}`}
               </span>
               <h2 className="text-lg sm:text-2xl font-extrabold text-white">
                 {account.fullName?.trim()
                   ? `خوش آمدید، ${account.fullName}`
+                  : portal
+                  ? 'خوش آمدید، شرکت‌کننده گرامی'
                   : 'خوش آمدید، مددجوی گرامی'}
               </h2>
+              {portal?.subtitle && (
+                <p className="text-xs text-emerald-100/90 leading-relaxed">{portal.subtitle}</p>
+              )}
               <p className="text-xs text-emerald-200 font-mono dir-ltr text-right">
                 شماره همراه حساب: {account.phone}
               </p>
@@ -997,10 +1019,14 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
         <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-12 text-center space-y-2">
           <ClipboardList className="w-10 h-10 text-slate-300 mx-auto" />
           <h3 className="font-bold text-sm text-slate-800">
-            در حال حاضر فرمی برای پروفایل مددجو فعال نشده است
+            {portal
+              ? 'هنوز فرم ثبت‌نامی برای پروژه‌های متصل به این صفحه اختصاصی تعریف نشده است'
+              : 'در حال حاضر فرمی برای پروفایل مددجو فعال نشده است'}
           </h3>
           <p className="text-xs text-slate-500">
-            مدیر مؤسسه می‌تواند از بخش «فرم‌ساز» فرم درخواست عمومی یا سایر فرم‌های اختصاصی را برای نمایش در این بخش فعال نماید.
+            {portal
+              ? 'مدیر سامانه می‌تواند در بخش «پروژه‌ها و طرح‌ها»، پروژه مورد نظر را به این صفحه ورود متصل کرده و فرم ثبت‌نام آن را انتخاب نماید.'
+              : 'مدیر مؤسسه می‌تواند از بخش «فرم‌ساز» فرم درخواست عمومی یا سایر فرم‌های اختصاصی را برای نمایش در این بخش فعال نماید.'}
           </p>
         </div>
       ) : (
@@ -1437,21 +1463,22 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
 
           {items.map((item) => {
             const { form, submission } = item;
-            const isExpanded = expandedForms[form.id] !== false;
-            const isSubmitting = submittingFormId === form.id;
-            const formErr = errorByForm[form.id];
-            const formSuccess = successByForm[form.id];
+            const itemKey = getItemKey(item);
+            const isExpanded = expandedForms[itemKey] !== false;
+            const isSubmitting = submittingFormId === itemKey;
+            const formErr = errorByForm[itemKey];
+            const formSuccess = successByForm[itemKey];
 
             return (
               <div
-                id={`portal-form-${form.id}`}
-                key={form.id}
+                id={`portal-form-${itemKey}`}
+                key={itemKey}
                 className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
               >
                 {/* Form Card Header */}
                 <div
                   onClick={() =>
-                    setExpandedForms((prev) => ({ ...prev, [form.id]: !isExpanded }))
+                    setExpandedForms((prev) => ({ ...prev, [itemKey]: !isExpanded }))
                   }
                   className="p-5 sm:p-6 bg-slate-50/80 border-b border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 transition"
                 >
@@ -1459,6 +1486,11 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                     <div className="flex items-center gap-2 flex-wrap">
                       <ClipboardList className="w-5 h-5 text-emerald-600 shrink-0" />
                       <h3 className="font-extrabold text-base text-slate-900">{form.title}</h3>
+                      {item.programTitle && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 text-[11px] font-bold">
+                          پروژه: {item.programTitle}
+                        </span>
+                      )}
 
                       {!submission ? (
                         <span className="px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[11px] font-bold">
@@ -1558,10 +1590,10 @@ export const BeneficiaryPortalView: React.FC<BeneficiaryPortalViewProps> = ({
                     <form onSubmit={(e) => handleFormSubmit(e, item)} className="space-y-5">
                       <DynamicFieldRenderer
                         fields={form.fields}
-                        values={valuesByForm[form.id] || {}}
+                        values={valuesByForm[itemKey] || {}}
                         entities={entities}
                         onChange={(nextVals) =>
-                          setValuesByForm((prev) => ({ ...prev, [form.id]: nextVals }))
+                          setValuesByForm((prev) => ({ ...prev, [itemKey]: nextVals }))
                         }
                         maxFileSizeMB={form.maxFileSizeMB || 5}
                         uploadContext={{ formId: form.id, formSlug: form.slug }}

@@ -9,6 +9,7 @@ import {
   CustomForm,
   CustomFormSubmission,
   FinanceSummary,
+  LoginPortal,
   PasswordResetRecord,
   Program,
   StaffUser,
@@ -18,6 +19,7 @@ import {
   SmsTemplate,
 } from '../types';
 import { EntityDefinition, SubmittedCustomFieldValue } from '../utils/publicFormConfig';
+import { ParticipantCondition } from '../utils/projectConditions';
 
 const AUTH_TOKEN_KEY = 'OM_CHARITY_AUTH_TOKEN';
 export const BENEFICIARY_TOKEN_KEY = 'OM_CHARITY_BENEFICIARY_TOKEN';
@@ -30,10 +32,11 @@ export class ApiError extends Error {
   code?: string;
   hint?: string;
   details?: string;
+  data?: any;
 
   constructor(
     message: string,
-    opts?: { status?: number; code?: string; hint?: string; details?: string }
+    opts?: { status?: number; code?: string; hint?: string; details?: string; data?: any }
   ) {
     super(message);
     this.name = 'ApiError';
@@ -41,6 +44,7 @@ export class ApiError extends Error {
     this.code = opts?.code;
     this.hint = opts?.hint;
     this.details = opts?.details;
+    this.data = opts?.data;
   }
 }
 
@@ -134,6 +138,7 @@ async function parseJsonOrThrow<T>(res: Response, fallbackMessage: string): Prom
       code,
       hint,
       details: rawDetails,
+      data,
     });
   }
   return data as T;
@@ -374,6 +379,77 @@ export const api = {
   deleteProgram: async (id: number): Promise<void> => {
     const res = await authFetch(`/api/programs/${id}`, { method: 'DELETE' });
     await parseJsonOrThrow(res, 'خطا در حذف طرح');
+  },
+
+  // Dedicated Login Portals (صفحات ورود اختصاصی)
+  getPortals: async (): Promise<LoginPortal[]> => {
+    const res = await authFetch('/api/portals');
+    return parseJsonOrThrow<LoginPortal[]>(res, 'خطا در دریافت لیست صفحات ورود اختصاصی');
+  },
+  getPublicPortal: async (slug: string): Promise<LoginPortal> => {
+    const res = await fetch(`/api/portals/public/${encodeURIComponent(slug)}`);
+    return parseJsonOrThrow<LoginPortal>(res, 'صفحه ورود اختصاصی مورد نظر یافت نشد');
+  },
+  createPortal: async (data: Partial<LoginPortal>): Promise<LoginPortal> => {
+    const res = await authFetch('/api/portals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return parseJsonOrThrow<LoginPortal>(res, 'خطا در ایجاد صفحه ورود اختصاصی');
+  },
+  updatePortal: async (id: string, data: Partial<LoginPortal>): Promise<LoginPortal> => {
+    const res = await authFetch(`/api/portals/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return parseJsonOrThrow<LoginPortal>(res, 'خطا در ذخیره صفحه ورود اختصاصی');
+  },
+  deletePortal: async (id: string): Promise<void> => {
+    const res = await authFetch(`/api/portals/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await parseJsonOrThrow(res, 'خطا در حذف صفحه ورود اختصاصی');
+  },
+
+  // Project Participants & Conditional Bulk Notification
+  getProgramParticipants: async (
+    programId: number
+  ): Promise<{
+    program: Program;
+    portal: LoginPortal | null;
+    forms: CustomForm[];
+    participants: CustomFormSubmission[];
+  }> => {
+    const res = await authFetch(`/api/programs/${programId}/participants`);
+    return parseJsonOrThrow(res, 'خطا در دریافت فهرست شرکت‌کنندگان پروژه');
+  },
+  bulkNotifyProgramParticipants: async (
+    programId: number,
+    payload: {
+      conditions: ParticipantCondition[];
+      logic: 'AND' | 'OR';
+      submissionIds?: number[];
+      sendInApp: boolean;
+      sendSms: boolean;
+      smsTemplateId?: number | null;
+      sendPush: boolean;
+      title: string;
+      message: string;
+    }
+  ): Promise<{
+    matchedCount: number;
+    sentInApp: number;
+    sentSms: number;
+    failedSms: number;
+    sentPush: number;
+    errors: string[];
+  }> => {
+    const res = await authFetch(`/api/programs/${programId}/participants/bulk-notify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'خطا در ارسال گروهی به شرکت‌کنندگان');
   },
 
   // Finance
@@ -727,6 +803,7 @@ export const api = {
     maskedPhone: string;
     simulated?: boolean;
     previewCode?: string;
+    maybeDelayed?: boolean;
   }> => {
     const res = await fetch('/api/beneficiary/auth/otp/send', {
       method: 'POST',
@@ -750,8 +827,9 @@ export const api = {
     const res = await beneficiaryAuthFetch('/api/beneficiary/auth/me', {}, token);
     return parseJsonOrThrow(res, 'نشست کاربری مددجو منقضی شده است');
   },
-  getBeneficiaryPortal: async (): Promise<{
+  getBeneficiaryPortal: async (portalSlug?: string): Promise<{
     beneficiary: BeneficiaryAccount;
+    portal?: LoginPortal | null;
     items: BeneficiaryPortalFormItem[];
     publicFormEnabled?: boolean;
     publicRequest?: BeneficiaryRequest | null;
@@ -759,8 +837,9 @@ export const api = {
     unreadNotificationsCount?: number;
     pushSubscribedCount?: number;
   }> => {
-    const res = await beneficiaryAuthFetch('/api/beneficiary/portal');
-    return parseJsonOrThrow(res, 'خطا در دریافت اطلاعات پروفایل مددجو');
+    const query = portalSlug ? `?portalSlug=${encodeURIComponent(portalSlug)}` : '';
+    const res = await beneficiaryAuthFetch(`/api/beneficiary/portal${query}`);
+    return parseJsonOrThrow(res, 'خطا در دریافت اطلاعات پروفایل');
   },
   getBeneficiaryNotifications: async (): Promise<{
     notifications: BeneficiaryNotification[];
@@ -825,17 +904,22 @@ export const api = {
   submitBeneficiaryForm: async (
     formId: string,
     data: SubmittedCustomFieldValue[],
-    isEdit = false
+    isEdit = false,
+    context?: { portalId?: string | null; programId?: number | null }
   ): Promise<CustomFormSubmission> => {
     const res = await beneficiaryAuthFetch(
       `/api/beneficiary/forms/${encodeURIComponent(formId)}/submit`,
       {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data }),
+        body: JSON.stringify({
+          data,
+          ...(context?.portalId ? { portalId: context.portalId } : {}),
+          ...(context?.programId ? { programId: context.programId } : {}),
+        }),
       }
     );
-    return parseJsonOrThrow(res, 'خطا در ثبت اطلاعات فرم مددجو');
+    return parseJsonOrThrow(res, 'خطا در ثبت اطلاعات فرم');
   },
 };
 

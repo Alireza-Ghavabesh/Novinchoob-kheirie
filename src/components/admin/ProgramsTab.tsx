@@ -1,8 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import {
   AppConfig,
+  CustomForm,
+  LoginPortal,
   Program,
   Category,
+  SmsTemplate,
   StaffUser,
 } from '../../types';
 import {
@@ -38,6 +41,11 @@ import {
   ChevronDown,
   ChevronUp,
   Tag,
+  Users,
+  KeyRound,
+  Copy,
+  Check,
+  ClipboardList,
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { ShamsiDatePicker } from '../ShamsiDatePicker';
@@ -49,17 +57,25 @@ import {
 } from '../DynamicFieldRenderer';
 import { FormFieldsEditor } from './FormFieldsEditor';
 import { ProgramFormBuilderSection } from './ProgramFormBuilderSection';
+import { ProjectParticipantsPanel } from './ProjectParticipantsPanel';
+import { parseRegistrationFormIds } from '../../utils/projectConditions';
 
 interface ProgramsTabProps {
   programs: Program[];
   programCategories: Category[];
+  portals?: LoginPortal[];
+  forms?: CustomForm[];
+  smsTemplates?: SmsTemplate[];
   currentUser: StaffUser;
   config: AppConfig | null;
   entities: EntityDefinition[];
+  activeParticipantsProgramId?: number | null;
+  onParticipantsProgramChange?: (programId: number | null) => void;
   onRefresh: () => void;
   onRefreshCategories: () => void;
   onConfigUpdated: (config: AppConfig) => void;
   onOpenFormBuilder?: () => void;
+  onOpenPortalsTab?: () => void;
 }
 
 const PIPELINE_STAGES = [
@@ -72,13 +88,19 @@ const PIPELINE_STAGES = [
 export const ProgramsTab: React.FC<ProgramsTabProps> = ({
   programs,
   programCategories,
+  portals = [],
+  forms = [],
+  smsTemplates = [],
   currentUser,
   config,
   entities,
+  activeParticipantsProgramId = null,
+  onParticipantsProgramChange,
   onRefresh,
   onRefreshCategories,
   onConfigUpdated,
   onOpenFormBuilder,
+  onOpenPortalsTab,
 }) => {
   const canCreate = currentUser.username === 'admin' || Boolean(currentUser.perms?.createProg);
   const canDecide = currentUser.username === 'admin' || Boolean(currentUser.perms?.decideProg);
@@ -94,6 +116,16 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
   );
 
   const [subTab, setSubTab] = useState<'list' | 'builder'>('list');
+  const [internalParticipantsId, setInternalParticipantsId] = useState<number | null>(null);
+  const effectiveParticipantsId =
+    activeParticipantsProgramId !== undefined && onParticipantsProgramChange
+      ? activeParticipantsProgramId
+      : internalParticipantsId;
+  const openParticipantsFor = (programId: number | null) => {
+    if (onParticipantsProgramChange) onParticipantsProgramChange(programId);
+    else setInternalParticipantsId(programId);
+  };
+  const [copiedPortalProgId, setCopiedPortalProgId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [stageFilter, setStageFilter] = useState<number | 'ALL'>('ALL');
   const [catFilter, setCatFilter] = useState<string>('ALL');
@@ -111,6 +143,8 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
   const [desc, setDesc] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [loginPortalId, setLoginPortalId] = useState('');
+  const [registrationFormIds, setRegistrationFormIds] = useState<string[]>([]);
   const [hideBuiltinFields, setHideBuiltinFields] = useState(false);
   const [instanceCustomFields, setInstanceCustomFields] = useState<CustomFormField[]>([]);
   const [showInstanceFieldDesigner, setShowInstanceFieldDesigner] = useState(false);
@@ -176,6 +210,8 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
     setDesc('');
     setStartDate(today.formatted);
     setEndDate('');
+    setLoginPortalId('');
+    setRegistrationFormIds([]);
     setHideBuiltinFields(customOnlyMode);
     setInstanceCustomFields([]);
     setShowInstanceFieldDesigner(customOnlyMode);
@@ -210,6 +246,8 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
     setDesc(p.desc || '');
     setStartDate(p.startDate || '');
     setEndDate(p.endDate || '');
+    setLoginPortalId(p.loginPortalId || '');
+    setRegistrationFormIds(parseRegistrationFormIds(p.registrationFormIds));
     setHideBuiltinFields(Boolean(parsedInstance.hideBuiltinFields));
     setInstanceCustomFields(JSON.parse(JSON.stringify(parsedInstance.fields || [])));
     setShowInstanceFieldDesigner(parsedInstance.fields.length > 0);
@@ -307,6 +345,8 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
         endDate: hideBuiltinFields || !b.showEndDate ? '' : endDate.trim(),
         customFields: JSON.stringify(extractedCustomValues),
         fieldSchema: serializedFieldSchema,
+        loginPortalId: loginPortalId || null,
+        registrationFormIds,
       };
 
       if (editingProg) {
@@ -382,6 +422,22 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
   };
 
   const b = programSchema.builtin;
+
+  const activeParticipantsProgram = effectiveParticipantsId
+    ? programs.find((p) => p.id === effectiveParticipantsId) || null
+    : null;
+
+  if (activeParticipantsProgram) {
+    return (
+      <ProjectParticipantsPanel
+        program={activeParticipantsProgram}
+        currentUser={currentUser}
+        smsTemplates={smsTemplates}
+        onBack={() => openParticipantsFor(null)}
+        onProgramUpdated={() => onRefresh()}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -522,6 +578,10 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
                 const customItems = parseSubmittedCustomFields(p.customFields);
                 const parsedInstance = parseProgramInstanceFieldSchema(p.fieldSchema);
                 const isCustomOnly = Boolean(parsedInstance.hideBuiltinFields);
+                const linkedPortal = p.loginPortalId
+                  ? portals.find((lp) => lp.id === p.loginPortalId) || null
+                  : null;
+                const regFormIds = parseRegistrationFormIds(p.registrationFormIds);
 
                 return (
                   <div
@@ -543,6 +603,32 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
                                 <Sparkles className="w-3 h-3" />
                                 فیلدهای اختصاصی
                               </span>
+                            )}
+                            {linkedPortal && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(
+                                    `${window.location.origin}/p/${linkedPortal.slug}`
+                                  );
+                                  setCopiedPortalProgId(p.id);
+                                  setTimeout(() => setCopiedPortalProgId(null), 1800);
+                                }}
+                                className="text-[10px] font-bold text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-full inline-flex items-center gap-1 border border-indigo-200 cursor-pointer"
+                                title="کپی لینک صفحه ورود اختصاصی این پروژه"
+                              >
+                                <KeyRound className="w-3 h-3" />
+                                <span>
+                                  {copiedPortalProgId === p.id
+                                    ? 'لینک کپی شد!'
+                                    : `${linkedPortal.title} (/p/${linkedPortal.slug})`}
+                                </span>
+                                {copiedPortalProgId === p.id ? (
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                ) : (
+                                  <Copy className="w-3 h-3 opacity-70" />
+                                )}
+                              </button>
                             )}
                           </div>
                           <h3 className="text-base font-bold text-slate-900 leading-snug">
@@ -711,22 +797,40 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
                     </div>
 
                     {/* Bottom Actions */}
-                    <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenPipelineModal(p)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold text-xs rounded-xl border border-emerald-200 transition cursor-pointer"
-                      >
-                        <Layers className="w-3.5 h-3.5" />
-                        <span>مدیریت پایپ‌لاین و گزارش</span>
-                      </button>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => openParticipantsFor(p.id)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-bold text-xs rounded-xl border border-indigo-200 transition cursor-pointer"
+                          title={
+                            regFormIds.length > 0
+                              ? `${regFormIds.length} فرم ثبت‌نام متصل است`
+                              : 'مدیریت شرکت‌کنندگان، پیامک شرطی و اعلانات پروژه'
+                          }
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                          <span>
+                            شرکت‌کنندگان ({toPersianDigits(p.participantsCount || 0)})
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleOpenPipelineModal(p)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold text-xs rounded-xl border border-emerald-200 transition cursor-pointer"
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                          <span>پایپ‌لاین و گزارش</span>
+                        </button>
+                      </div>
 
                       <div className="flex items-center gap-1">
                         {(canCreate || canDecide) && (
                           <button
                             type="button"
                             onClick={() => openEditModal(p)}
-                            title="ویرایش اطلاعات و فیلدهای پروژه"
+                            title="ویرایش اطلاعات، صفحه ورود و فیلدهای پروژه"
                             className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
                           >
                             <Edit3 className="w-4 h-4" />
@@ -1323,6 +1427,116 @@ export const ProgramsTab: React.FC<ProgramsTabProps> = ({
                   />
                 </div>
               )}
+
+              {/* Dedicated Login Portal & Registration Forms Connection */}
+              <div className="rounded-2xl border border-indigo-200/80 bg-indigo-50/40 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <KeyRound className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <div>
+                      <span className="font-bold text-slate-900 block">
+                        اتصال به صفحه ورود اختصاصی و فرم‌های ثبت‌نام شرکت‌کنندگان
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        با اتصال پروژه به یک صفحه ورود اختصاصی، مخاطبان با لینک مجزا وارد شده و فرم‌های انتخابی زیر را تکمیل می‌کنند.
+                      </span>
+                    </div>
+                  </div>
+                  {onOpenPortalsTab && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProgramModal(false);
+                        onOpenPortalsTab();
+                      }}
+                      className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer"
+                    >
+                      مدیریت صفحات ورود اختصاصی
+                    </button>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    صفحه ورود اختصاصی متصل به این پروژه
+                  </label>
+                  <select
+                    value={loginPortalId}
+                    onChange={(e) => setLoginPortalId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-indigo-200 bg-white outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-semibold"
+                  >
+                    <option value="">— بدون صفحه ورود اختصاصی —</option>
+                    {portals.map((lp) => (
+                      <option key={lp.id} value={lp.id}>
+                        {lp.title} (/p/{lp.slug}){!lp.isActive ? ' [غیرفعال]' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {loginPortalId && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block font-semibold text-slate-700 flex items-center gap-1">
+                        <ClipboardList className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>فرم‌های ثبت‌نام قابل نمایش برای شرکت‌کنندگان این پروژه:</span>
+                      </label>
+                      {onOpenFormBuilder && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowProgramModal(false);
+                            onOpenFormBuilder();
+                          }}
+                          className="text-[11px] font-bold text-emerald-700 hover:underline cursor-pointer"
+                        >
+                          + ساخت فرم جدید در فرم‌ساز
+                        </button>
+                      )}
+                    </div>
+
+                    {forms.length === 0 ? (
+                      <p className="text-[11px] text-slate-500 bg-white rounded-xl p-2.5 border border-slate-200">
+                        هنوز فرمی در بخش «فرم‌ساز» ایجاد نشده است. ابتدا در فرم‌ساز یک فرم بسازید و سپس اینجا انتخاب کنید.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-1">
+                        {forms.map((f) => {
+                          const checked = registrationFormIds.includes(f.id);
+                          return (
+                            <label
+                              key={f.id}
+                              className={`flex items-center gap-2 p-2 rounded-xl border text-xs cursor-pointer transition ${
+                                checked
+                                  ? 'bg-white border-indigo-400 text-indigo-950 font-bold shadow-xs'
+                                  : 'bg-white/70 border-slate-200 text-slate-700 hover:bg-white'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setRegistrationFormIds((prev) =>
+                                      prev.includes(f.id) ? prev : [...prev, f.id]
+                                    );
+                                  } else {
+                                    setRegistrationFormIds((prev) =>
+                                      prev.filter((id) => id !== f.id)
+                                    );
+                                  }
+                                }}
+                                className="rounded text-indigo-600"
+                              />
+                              <span className="truncate">{f.title}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button

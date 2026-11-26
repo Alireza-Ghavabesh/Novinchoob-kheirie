@@ -6,7 +6,7 @@
   "scripts": {
     "postinstall": "prisma generate",
     "dev": "node scripts/sync-db.mjs && tsx server.ts",
-    "start": "node scripts/sync-db.mjs && tsx server.ts",
+    "start": "node scripts/sync-db.mjs && tsx server.ts --prod",
     "build": "node scripts/sync-db.mjs --generate-only && vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",

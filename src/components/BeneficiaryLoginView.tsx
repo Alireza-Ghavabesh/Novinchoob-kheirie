@@ -12,7 +12,7 @@ import {
   Info,
   Phone,
 } from 'lucide-react';
-import { AppConfig, BeneficiaryAccount } from '../types';
+import { AppConfig, BeneficiaryAccount, LoginPortal } from '../types';
 import { api } from '../services/api';
 import { toEnglishDigits, toPersianDigits } from '../utils/persian';
 import { useWebOtp } from '../utils/useWebOtp';
@@ -20,6 +20,7 @@ import { getLoginTheme, parseBeneficiaryLoginConfig } from '../utils/loginThemes
 
 interface BeneficiaryLoginViewProps {
   config: AppConfig | null;
+  portal?: LoginPortal | null;
   onLoginSuccess: (beneficiary: BeneficiaryAccount, token: string) => void;
   onBackToPublic: () => void;
   isolated?: boolean;
@@ -27,19 +28,40 @@ interface BeneficiaryLoginViewProps {
 
 export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
   config,
+  portal = null,
   onLoginSuccess,
   onBackToPublic,
   isolated = false,
 }) => {
-  const pageCfg = useMemo(
+  const defaultCfg = useMemo(
     () => parseBeneficiaryLoginConfig(config?.beneficiaryLoginConfig),
     [config?.beneficiaryLoginConfig]
   );
+  const pageCfg = useMemo(() => {
+    if (!portal) return defaultCfg;
+    return {
+      title: portal.title || defaultCfg.title,
+      subtitle: portal.subtitle || '',
+      welcomeNote: portal.welcomeNote || '',
+      phoneLabel: portal.phoneLabel || 'شماره موبایل',
+      phoneHelperText: portal.phoneHelperText || 'کد تایید ۶ رقمی به این شماره پیامک خواهد شد.',
+      submitButtonText: portal.submitButtonText || 'ارسال کد تایید پیامکی',
+      verifyButtonText: portal.verifyButtonText || 'تایید کد و ورود',
+      footerText: portal.footerText || '',
+      theme: portal.theme || 'emerald',
+      bgDataUrl: portal.bgDataUrl || null,
+      showLogo: portal.showLogo !== false,
+      showSupportPhone: portal.showSupportPhone !== false,
+    };
+  }, [portal, defaultCfg]);
+
   const theme = getLoginTheme(pageCfg.theme);
   const instName = config?.instName || 'مؤسسه خیریه حضرت ام‌البنین (س)';
   const subtitleText =
     pageCfg.subtitle.trim() ||
-    `${instName} — تکمیل و ویرایش فرم‌ها، بارگذاری مدارک و مشاهده پیغام کارشناسان`;
+    (portal
+      ? `${instName} — ورود با شماره همراه و کد تایید پیامکی`
+      : `${instName} — تکمیل و ویرایش فرم‌ها، بارگذاری مدارک و مشاهده پیغام کارشناسان`);
   const hasBgImage = Boolean(pageCfg.bgDataUrl);
 
   const [phone, setPhone] = useState('');
@@ -89,20 +111,48 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
       setOtpSent(true);
       setMaskedPhone(res.maskedPhone || ph);
       setOtpCode('');
-      setCountdown(res.expiresIn || 180);
+      setCountdown(res.expiresIn || 120);
       if (res.simulated && res.previewCode) {
         setSimulatedCode(res.previewCode);
         setInfoMsg(
           `کد تایید به شماره ${res.maskedPhone} ارسال شد (حالت آزمایشی بدون کلید پیامک فعال).`
         );
+      } else if (res.maybeDelayed) {
+        setInfoMsg(
+          `درخواست ارسال کد به شماره ${res.maskedPhone} ثبت شد. پس از دریافت پیامک، کد ۶ رقمی را وارد کنید.`
+        );
       } else {
         setInfoMsg(`کد تایید ۶ رقمی به شماره ${res.maskedPhone} پیامک شد.`);
       }
     } catch (err: any) {
-      setError(err.message || 'خطا در ارسال کد تایید پیامکی');
+      const errData = err?.data;
+      if (errData?.otpAlreadySent) {
+        // Code was already sent within cooldown window — open OTP entry box directly instead of blocking user
+        setOtpSent(true);
+        setMaskedPhone(errData.maskedPhone || ph);
+        setCountdown(Number(errData.expiresIn || errData.retryAfter || 60));
+        setInfoMsg(
+          errData.error ||
+            'کد تایید دقایقی پیش ارسال شده است؛ لطفاً کد دریافتی را در کادر زیر وارد نمایید.'
+        );
+      } else {
+        setError(err.message || 'خطا در ارسال کد تایید پیامکی');
+      }
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleOpenManualOtp = () => {
+    setError('');
+    const ph = toEnglishDigits(phone.trim());
+    if (!ph || ph.length < 10) {
+      setError('ابتدا شماره همراه خود (مانند 09123456789) را وارد نمایید.');
+      return;
+    }
+    setOtpSent(true);
+    setMaskedPhone(ph);
+    setInfoMsg('لطفاً کد تایید ۶ رقمی پیامک‌شده به شماره همراه خود را وارد نمایید.');
   };
 
   const verifyOtpCode = async (rawCode: string) => {
@@ -275,6 +325,17 @@ export const BeneficiaryLoginView: React.FC<BeneficiaryLoginViewProps> = ({
                   </>
                 )}
               </button>
+
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={handleOpenManualOtp}
+                  disabled={loading}
+                  className={`text-[11px] font-semibold hover:underline cursor-pointer ${theme.linkText}`}
+                >
+                  کد تایید را قبلاً دریافت کرده‌اید؟ ورود مستقیم کد
+                </button>
+              </div>
             </form>
           ) : (
             <form onSubmit={handleVerifyOtp} className="space-y-4">

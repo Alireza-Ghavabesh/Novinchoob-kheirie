@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   AlertCircle,
   ClipboardList,
+  Globe,
 } from 'lucide-react';
 import {
   StaffUser,
@@ -22,12 +23,16 @@ import {
   Program,
   Category,
   AppConfig,
+  CustomForm,
+  LoginPortal,
+  SmsTemplate,
 } from '../../types';
 import { EntityDefinition } from '../../utils/publicFormConfig';
 import { hasPermission } from '../../utils/permissions';
 import { api } from '../../services/api';
 import { RequestsTab } from './RequestsTab';
 import { ProgramsTab } from './ProgramsTab';
+import { PortalsTab } from './PortalsTab';
 import { CalendarTab } from './CalendarTab';
 import { FinanceTab } from './FinanceTab';
 import { UsersTab } from './UsersTab';
@@ -51,7 +56,45 @@ interface AdminLayoutProps {
   onCurrentUserUpdated?: (user: StaffUser) => void;
 }
 
-export type AdminTab = 'inbox' | 'programs' | 'calendar' | 'finance' | 'users' | 'sms' | 'forms' | 'settings';
+export type AdminTab =
+  | 'inbox'
+  | 'programs'
+  | 'portals'
+  | 'calendar'
+  | 'finance'
+  | 'users'
+  | 'sms'
+  | 'forms'
+  | 'settings';
+
+const VALID_ADMIN_TABS: AdminTab[] = [
+  'inbox',
+  'programs',
+  'portals',
+  'calendar',
+  'finance',
+  'users',
+  'sms',
+  'forms',
+  'settings',
+];
+
+function parseAdminRouteFromLocation(): { tab: AdminTab | null; participantsProgramId: number | null } {
+  if (typeof window === 'undefined') return { tab: null, participantsProgramId: null };
+  const path = window.location.pathname.replace(/\/+$/, '');
+  const partMatch = path.match(/^\/admin\/programs\/(\d+)\/participants$/i);
+  if (partMatch) {
+    return { tab: 'programs', participantsProgramId: parseInt(partMatch[1], 10) };
+  }
+  const tabMatch = path.match(/^\/admin\/([a-z-]+)$/i);
+  if (tabMatch) {
+    const candidate = tabMatch[1].toLowerCase() as AdminTab;
+    if (VALID_ADMIN_TABS.includes(candidate)) {
+      return { tab: candidate, participantsProgramId: null };
+    }
+  }
+  return { tab: null, participantsProgramId: null };
+}
 
 export const AdminLayout: React.FC<AdminLayoutProps> = ({
   currentUser,
@@ -82,11 +125,13 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   const canForms =
     hasPermission(currentUser, 'viewForms') || hasPermission(currentUser, 'manageForms');
   const canSettings = hasPermission(currentUser, 'manageSettings');
+  const canPortals = canForms || canProg || canSettings;
 
   const isTabAllowed = useCallback(
     (tab: AdminTab) => {
       if (tab === 'inbox') return canInbox;
       if (tab === 'programs') return canProg;
+      if (tab === 'portals') return canPortals;
       if (tab === 'calendar') return canCalendar;
       if (tab === 'finance') return canFin;
       if (tab === 'users') return canUsers;
@@ -95,7 +140,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
       if (tab === 'settings') return canSettings;
       return false;
     },
-    [canInbox, canProg, canCalendar, canFin, canUsers, canSms, canForms, canSettings]
+    [canInbox, canProg, canPortals, canCalendar, canFin, canUsers, canSms, canForms, canSettings]
   );
 
   // Determine default tab based on user permissions
@@ -103,14 +148,24 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     if (canInbox) return 'inbox';
     if (canForms) return 'forms';
     if (canProg) return 'programs';
+    if (canPortals) return 'portals';
     if (canFin) return 'finance';
     if (canSms) return 'sms';
     if (canUsers) return 'users';
     if (canSettings) return 'settings';
     return 'calendar';
-  }, [canInbox, canForms, canProg, canFin, canSms, canUsers, canSettings]);
+  }, [canInbox, canForms, canProg, canPortals, canFin, canSms, canUsers, canSettings]);
 
-  const [activeTab, setActiveTab] = useState<AdminTab>(() => getInitialTab());
+  const initialRoute = parseAdminRouteFromLocation();
+  const [activeTab, setActiveTab] = useState<AdminTab>(() =>
+    initialRoute.tab && isTabAllowed(initialRoute.tab) ? initialRoute.tab : getInitialTab()
+  );
+  const [participantsProgramId, setParticipantsProgramId] = useState<number | null>(
+    () => initialRoute.participantsProgramId
+  );
+  const [portals, setPortals] = useState<LoginPortal[]>([]);
+  const [formsList, setFormsList] = useState<CustomForm[]>([]);
+  const [smsTemplates, setSmsTemplates] = useState<SmsTemplate[]>([]);
   const [copiedPublicLink, setCopiedPublicLink] = useState(false);
 
   // Self-service password change modal state
@@ -122,11 +177,82 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   const [passError, setPassError] = useState('');
   const [passSuccess, setPassSuccess] = useState(false);
 
+  const syncAdminUrl = useCallback(
+    (tab: AdminTab, progId: number | null = null, replace = false) => {
+      if (typeof window === 'undefined') return;
+      const target =
+        tab === 'programs' && progId ? `/admin/programs/${progId}/participants` : `/admin/${tab}`;
+      if (window.location.pathname !== target) {
+        if (replace) window.history.replaceState({}, '', target);
+        else window.history.pushState({}, '', target);
+      }
+    },
+    []
+  );
+
+  const switchTab = useCallback(
+    (tab: AdminTab, progId: number | null = null) => {
+      setActiveTab(tab);
+      setParticipantsProgramId(tab === 'programs' ? progId : null);
+      syncAdminUrl(tab, tab === 'programs' ? progId : null);
+    },
+    [syncAdminUrl]
+  );
+
+  const handleParticipantsProgramChange = useCallback(
+    (progId: number | null) => {
+      setParticipantsProgramId(progId);
+      syncAdminUrl('programs', progId);
+    },
+    [syncAdminUrl]
+  );
+
+  // Sync URL on initial mount & listen to browser back/forward
+  useEffect(() => {
+    const parsed = parseAdminRouteFromLocation();
+    if (parsed.tab && isTabAllowed(parsed.tab)) {
+      setActiveTab(parsed.tab);
+      setParticipantsProgramId(parsed.participantsProgramId);
+    } else {
+      const fallback = getInitialTab();
+      setActiveTab(fallback);
+      setParticipantsProgramId(null);
+      syncAdminUrl(fallback, null, true);
+    }
+
+    const onPopState = () => {
+      const next = parseAdminRouteFromLocation();
+      if (next.tab && isTabAllowed(next.tab)) {
+        setActiveTab(next.tab);
+        setParticipantsProgramId(next.participantsProgramId);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [isTabAllowed, getInitialTab, syncAdminUrl]);
+
+  const loadPortalsAndSupporting = useCallback(async () => {
+    const [pRes, fRes, tRes] = await Promise.all([
+      canPortals ? api.getPortals().catch(() => []) : Promise.resolve([]),
+      canForms || canProg ? api.getForms().catch(() => []) : Promise.resolve([]),
+      api.getSmsTemplates(false).catch(() => []),
+    ]);
+    setPortals(Array.isArray(pRes) ? pRes : []);
+    setFormsList(Array.isArray(fRes) ? fRes : []);
+    setSmsTemplates(Array.isArray(tRes) ? tRes : []);
+  }, [canPortals, canForms, canProg]);
+
+  useEffect(() => {
+    loadPortalsAndSupporting();
+  }, [loadPortalsAndSupporting]);
+
   useEffect(() => {
     if (!isTabAllowed(activeTab)) {
-      setActiveTab(getInitialTab());
+      const fallback = getInitialTab();
+      setActiveTab(fallback);
+      syncAdminUrl(fallback, null, true);
     }
-  }, [activeTab, isTabAllowed, getInitialTab]);
+  }, [activeTab, isTabAllowed, getInitialTab, syncAdminUrl]);
 
   const handleCopyPublicFormLink = () => {
     const url = `${window.location.origin}/form`;
@@ -222,8 +348,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
         <div className="hidden md:flex flex-wrap items-center gap-1.5 bg-slate-950/80 p-1.5 rounded-xl border border-slate-800 text-xs">
           {canInbox && (
             <button
-              onClick={() => setActiveTab('inbox')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
+              onClick={() => switchTab('inbox')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition cursor-pointer ${
                 activeTab === 'inbox'
                   ? 'bg-emerald-600 text-white shadow'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -236,8 +362,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
           {canProg && (
             <button
-              onClick={() => setActiveTab('programs')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
+              onClick={() => switchTab('programs')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition cursor-pointer ${
                 activeTab === 'programs'
                   ? 'bg-emerald-600 text-white shadow'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -248,10 +374,24 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </button>
           )}
 
+          {canPortals && (
+            <button
+              onClick={() => switchTab('portals')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition cursor-pointer ${
+                activeTab === 'portals'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Globe className="w-4 h-4 text-indigo-400" />
+              <span>صفحات ورود اختصاصی</span>
+            </button>
+          )}
+
           {canCalendar && (
             <button
-              onClick={() => setActiveTab('calendar')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
+              onClick={() => switchTab('calendar')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition cursor-pointer ${
                 activeTab === 'calendar'
                   ? 'bg-emerald-600 text-white shadow'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -264,8 +404,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
           {canFin && (
             <button
-              onClick={() => setActiveTab('finance')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
+              onClick={() => switchTab('finance')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition cursor-pointer ${
                 activeTab === 'finance'
                   ? 'bg-emerald-600 text-white shadow'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -278,8 +418,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
           {canUsers && (
             <button
-              onClick={() => setActiveTab('users')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
+              onClick={() => switchTab('users')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition cursor-pointer ${
                 activeTab === 'users'
                   ? 'bg-emerald-600 text-white shadow'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -292,8 +432,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
           {canSms && (
             <button
-              onClick={() => setActiveTab('sms')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
+              onClick={() => switchTab('sms')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition cursor-pointer ${
                 activeTab === 'sms'
                   ? 'bg-amber-600 text-white shadow'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -306,8 +446,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
           {canForms && (
             <button
-              onClick={() => setActiveTab('forms')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
+              onClick={() => switchTab('forms')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition cursor-pointer ${
                 activeTab === 'forms'
                   ? 'bg-emerald-600 text-white shadow'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -320,8 +460,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
           {canSettings && (
             <button
-              onClick={() => setActiveTab('settings')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition ${
+              onClick={() => switchTab('settings')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold transition cursor-pointer ${
                 activeTab === 'settings'
                   ? 'bg-emerald-600 text-white shadow'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -351,13 +491,35 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           <ProgramsTab
             programs={programs}
             programCategories={programCategories}
+            portals={portals}
+            forms={formsList}
+            smsTemplates={smsTemplates}
             currentUser={currentUser}
             config={config}
             entities={entities}
-            onRefresh={onRefreshPrograms}
+            activeParticipantsProgramId={participantsProgramId}
+            onParticipantsProgramChange={handleParticipantsProgramChange}
+            onRefresh={() => {
+              onRefreshPrograms();
+              loadPortalsAndSupporting();
+            }}
             onRefreshCategories={onRefreshCategories}
             onConfigUpdated={onConfigUpdated}
-            onOpenFormBuilder={canForms ? () => setActiveTab('forms') : undefined}
+            onOpenFormBuilder={canForms ? () => switchTab('forms') : undefined}
+            onOpenPortalsTab={canPortals ? () => switchTab('portals') : undefined}
+          />
+        )}
+
+        {activeTab === 'portals' && canPortals && (
+          <PortalsTab
+            portals={portals}
+            onRefresh={async () => {
+              await loadPortalsAndSupporting();
+              onRefreshPrograms();
+            }}
+            onOpenProgramParticipants={
+              canProg ? (progId) => switchTab('programs', progId) : undefined
+            }
           />
         )}
 
@@ -400,8 +562,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             onConfigUpdated={onConfigUpdated}
             onCurrentUserUpdated={onCurrentUserUpdated}
             onRefreshCategories={onRefreshCategories}
-            onOpenFormBuilder={() => setActiveTab('forms')}
-            onOpenSmsTab={() => setActiveTab('sms')}
+            onOpenFormBuilder={() => switchTab('forms')}
+            onOpenSmsTab={() => switchTab('sms')}
           />
         )}
       </div>
@@ -499,7 +661,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
       <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-40 py-2 px-2 shadow-lg flex items-center justify-around gap-1 overflow-x-auto text-[10px]">
         {canInbox && (
           <button
-            onClick={() => setActiveTab('inbox')}
+            onClick={() => switchTab('inbox')}
             className={`flex flex-col items-center gap-1 min-w-[48px] ${
               activeTab === 'inbox' ? 'text-emerald-700 font-bold' : 'text-slate-500'
             }`}
@@ -511,7 +673,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {canProg && (
           <button
-            onClick={() => setActiveTab('programs')}
+            onClick={() => switchTab('programs')}
             className={`flex flex-col items-center gap-1 min-w-[44px] ${
               activeTab === 'programs' ? 'text-emerald-700 font-bold' : 'text-slate-500'
             }`}
@@ -521,9 +683,21 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           </button>
         )}
 
+        {canPortals && (
+          <button
+            onClick={() => switchTab('portals')}
+            className={`flex flex-col items-center gap-1 min-w-[46px] ${
+              activeTab === 'portals' ? 'text-indigo-700 font-bold' : 'text-slate-500'
+            }`}
+          >
+            <Globe className="w-4 h-4" />
+            <span>پورتال‌ها</span>
+          </button>
+        )}
+
         {canCalendar && (
           <button
-            onClick={() => setActiveTab('calendar')}
+            onClick={() => switchTab('calendar')}
             className={`flex flex-col items-center gap-1 min-w-[44px] ${
               activeTab === 'calendar' ? 'text-emerald-700 font-bold' : 'text-slate-500'
             }`}
@@ -535,7 +709,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {canFin && (
           <button
-            onClick={() => setActiveTab('finance')}
+            onClick={() => switchTab('finance')}
             className={`flex flex-col items-center gap-1 min-w-[40px] ${
               activeTab === 'finance' ? 'text-emerald-700 font-bold' : 'text-slate-500'
             }`}
@@ -547,7 +721,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {canUsers && (
           <button
-            onClick={() => setActiveTab('users')}
+            onClick={() => switchTab('users')}
             className={`flex flex-col items-center gap-1 min-w-[44px] ${
               activeTab === 'users' ? 'text-emerald-700 font-bold' : 'text-slate-500'
             }`}
@@ -559,7 +733,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {canSms && (
           <button
-            onClick={() => setActiveTab('sms')}
+            onClick={() => switchTab('sms')}
             className={`flex flex-col items-center gap-1 min-w-[44px] ${
               activeTab === 'sms' ? 'text-amber-700 font-bold' : 'text-slate-500'
             }`}
@@ -571,7 +745,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {canForms && (
           <button
-            onClick={() => setActiveTab('forms')}
+            onClick={() => switchTab('forms')}
             className={`flex flex-col items-center gap-1 min-w-[44px] ${
               activeTab === 'forms' ? 'text-emerald-700 font-bold' : 'text-slate-500'
             }`}
@@ -583,7 +757,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {canSettings && (
           <button
-            onClick={() => setActiveTab('settings')}
+            onClick={() => switchTab('settings')}
             className={`flex flex-col items-center gap-1 min-w-[44px] ${
               activeTab === 'settings' ? 'text-emerald-700 font-bold' : 'text-slate-500'
             }`}

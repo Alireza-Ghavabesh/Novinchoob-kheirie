@@ -81,9 +81,34 @@ export interface Program {
   approvedBy?: string | null;
   customFields?: string | null;
   fieldSchema?: string | null;
+  loginPortalId?: string | null;
+  registrationFormIds?: string | null;
+  notificationRules?: string | null;
+  participantsCount?: number;
   logs: ProgramLog[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LoginPortal {
+  id: string;
+  slug: string;
+  title: string;
+  subtitle: string;
+  welcomeNote: string;
+  phoneLabel: string;
+  phoneHelperText: string;
+  submitButtonText: string;
+  verifyButtonText: string;
+  footerText: string;
+  theme: string;
+  bgDataUrl?: string | null;
+  showLogo: boolean;
+  showSupportPhone: boolean;
+  isActive: boolean;
+  connectedPrograms?: Array<{ id: number; title: string; cat: string }>;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface UserPermissions {
@@ -274,6 +299,9 @@ export interface CustomFormSubmission {
   id: number;
   trackingCode: string;
   formId: string;
+  formTitle?: string;
+  portalId?: string | null;
+  programId?: number | null;
   beneficiaryId?: string | null;
   beneficiary?: BeneficiaryAccount | null;
   data: import('../utils/publicFormConfig').SubmittedCustomFieldValue[];
@@ -297,6 +325,8 @@ export interface BeneficiaryNotification {
   type: string;
   formId?: string | null;
   formTitle?: string | null;
+  portalId?: string | null;
+  programId?: number | null;
   trackingCode?: string | null;
   senderName?: string | null;
   isRead: boolean;
@@ -314,5 +344,7 @@ export interface BeneficiaryNotifyResult {
 export interface BeneficiaryPortalFormItem {
   form: CustomForm;
   submission: CustomFormSubmission | null;
+  programId?: number | null;
+  programTitle?: string | null;
 }
 

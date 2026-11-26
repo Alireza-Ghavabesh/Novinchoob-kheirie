@@ -76,7 +76,7 @@ export class GhasedakSmsService {
     response: Response,
     resData: any,
     modeLabel: 'OTP' | 'SIMPLE'
-  ): { success: boolean; messageId?: string; cost?: number; error?: string } {
+  ): { success: boolean; messageId?: string; cost?: number; error?: string; timedOut?: boolean } {
     const resultField = resData?.result;
     const resultStr = typeof resultField === 'string' ? resultField.trim().toLowerCase() : '';
     const resultObj = resultField && typeof resultField === 'object' ? resultField : null;
@@ -86,27 +86,43 @@ export class GhasedakSmsService {
       : resData?.messageids ??
         (Array.isArray(resData?.items) ? resData.items[0] : resData?.items) ??
         resData?.data?.messageId ??
+        resData?.data?.messageid ??
+        resData?.messageId ??
         resData?.messageid;
 
     const hasValidMessageId =
-      rawMsgId !== undefined && rawMsgId !== null && String(rawMsgId).trim() !== '' && String(rawMsgId) !== '0';
+      rawMsgId !== undefined &&
+      rawMsgId !== null &&
+      String(rawMsgId).trim() !== '' &&
+      String(rawMsgId) !== '0';
+
+    const statusCodeNum =
+      resultObj?.code !== undefined
+        ? Number(resultObj.code)
+        : resData?.statusCode !== undefined
+        ? Number(resData.statusCode)
+        : resData?.status !== undefined && !isNaN(Number(resData.status))
+        ? Number(resData.status)
+        : undefined;
 
     const hasExplicitError =
       resultStr === 'error' ||
       resultStr === 'fail' ||
       resultStr === 'failed' ||
       resData?.isSuccess === false ||
-      (resultObj?.code !== undefined && Number(resultObj.code) !== 200);
+      (statusCodeNum !== undefined && Number.isFinite(statusCodeNum) && statusCodeNum !== 200);
 
     const hasExplicitSuccess =
       resultStr === 'success' ||
       resultStr === 'ok' ||
       resData?.isSuccess === true ||
-      Number(resultObj?.code) === 200 ||
+      statusCodeNum === 200 ||
       String(resultObj?.status || '').toLowerCase() === 'success' ||
       String(resultObj?.message || '').toLowerCase() === 'success';
 
-    if (response.ok && !hasExplicitError && (hasExplicitSuccess || hasValidMessageId)) {
+    // If HTTP 200 OK and no explicit error flag was returned by Ghasedak, treat as success
+    // so valid SMS deliveries are never wrongly invalidated due to response shape changes.
+    if (response.ok && !hasExplicitError && (hasExplicitSuccess || hasValidMessageId || resData !== null)) {
       return {
         success: true,
         messageId: hasValidMessageId
@@ -116,7 +132,7 @@ export class GhasedakSmsService {
       };
     }
 
-    const errCode = resultObj?.code || resData?.statusCode || response.status;
+    const errCode = statusCodeNum || response.status;
     const errDetail =
       resultObj?.message ||
       resData?.message ||
@@ -148,7 +164,7 @@ export class GhasedakSmsService {
       param2?: string | null;
       param3?: string | null;
     }
-  ): Promise<{ success: boolean; messageId?: string; cost?: number; error?: string }> {
+  ): Promise<{ success: boolean; messageId?: string; cost?: number; error?: string; timedOut?: boolean }> {
     const cleanApiKey = (apiKey || '').trim();
     const cleanSenderLine = (senderLine || '').trim();
     const cleanTemplateName = (rule?.templateName || '').trim();
@@ -161,6 +177,9 @@ export class GhasedakSmsService {
     if (!cleanReceptor || cleanReceptor.length < 10) {
       return { success: false, error: `شماره گیرنده نامعتبر است: ${receptor}` };
     }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
     try {
       if (rule?.templateType === 'OTP' && cleanTemplateName) {
@@ -181,6 +200,7 @@ export class GhasedakSmsService {
             'cache-control': 'no-cache',
           },
           body: params.toString(),
+          signal: controller.signal,
         });
 
         const resData = await response.json().catch(() => ({}));
@@ -203,13 +223,23 @@ export class GhasedakSmsService {
             'cache-control': 'no-cache',
           },
           body: params.toString(),
+          signal: controller.signal,
         });
 
         const resData = await response.json().catch(() => ({}));
         return this.parseGhasedakResponse(response, resData, 'SIMPLE');
       }
     } catch (err: any) {
-      return { success: false, error: err?.message || String(err) };
+      const isAbort = err?.name === 'AbortError' || /abort|timeout/i.test(String(err?.message || err));
+      return {
+        success: false,
+        timedOut: isAbort,
+        error: isAbort
+          ? 'زمان انتظار پاسخ از سرور پیامک به پایان رسید.'
+          : err?.message || String(err),
+      };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

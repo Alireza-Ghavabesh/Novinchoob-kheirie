@@ -20,6 +20,12 @@ import {
   parseCustomFormSmsRules,
   parsePublicFormSchema,
 } from './src/utils/publicFormConfig.ts';
+import {
+  evaluateParticipantConditions,
+  parseProjectNotificationRules,
+  parseRegistrationFormIds,
+  ProjectRuleEvent,
+} from './src/utils/projectConditions.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -167,6 +173,9 @@ async function ensureDatabaseSchema(): Promise<void> {
       { table: 'AppConfig', column: 'programFormConfig', ddl: `ALTER TABLE "AppConfig" ADD COLUMN "programFormConfig" TEXT NOT NULL DEFAULT ''` },
       { table: 'Program', column: 'customFields', ddl: `ALTER TABLE "Program" ADD COLUMN "customFields" TEXT NOT NULL DEFAULT '[]'` },
       { table: 'Program', column: 'fieldSchema', ddl: `ALTER TABLE "Program" ADD COLUMN "fieldSchema" TEXT NOT NULL DEFAULT ''` },
+      { table: 'Program', column: 'loginPortalId', ddl: `ALTER TABLE "Program" ADD COLUMN "loginPortalId" TEXT` },
+      { table: 'Program', column: 'registrationFormIds', ddl: `ALTER TABLE "Program" ADD COLUMN "registrationFormIds" TEXT NOT NULL DEFAULT '[]'` },
+      { table: 'Program', column: 'notificationRules', ddl: `ALTER TABLE "Program" ADD COLUMN "notificationRules" TEXT NOT NULL DEFAULT '[]'` },
       { table: 'SmsConfig', column: 'loginOtpTemplate', ddl: `ALTER TABLE "SmsConfig" ADD COLUMN "loginOtpTemplate" TEXT NOT NULL DEFAULT ''` },
       { table: 'SmsConfig', column: 'loginOtpMessage', ddl: `ALTER TABLE "SmsConfig" ADD COLUMN "loginOtpMessage" TEXT NOT NULL DEFAULT ''` },
       { table: 'User', column: 'phone', ddl: `ALTER TABLE "User" ADD COLUMN "phone" TEXT` },
@@ -177,9 +186,13 @@ async function ensureDatabaseSchema(): Promise<void> {
       { table: 'CustomForm', column: 'maxFileSizeMB', ddl: `ALTER TABLE "CustomForm" ADD COLUMN "maxFileSizeMB" INTEGER NOT NULL DEFAULT 5` },
       { table: 'CustomForm', column: 'smsRules', ddl: `ALTER TABLE "CustomForm" ADD COLUMN "smsRules" TEXT NOT NULL DEFAULT '[]'` },
       { table: 'CustomFormSubmission', column: 'beneficiaryId', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "beneficiaryId" TEXT` },
+      { table: 'CustomFormSubmission', column: 'portalId', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "portalId" TEXT` },
+      { table: 'CustomFormSubmission', column: 'programId', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "programId" INTEGER` },
       { table: 'CustomFormSubmission', column: 'expertMessage', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "expertMessage" TEXT` },
       { table: 'CustomFormSubmission', column: 'expertMessageAt', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "expertMessageAt" DATETIME` },
       { table: 'CustomFormSubmission', column: 'expertMessageBy', ddl: `ALTER TABLE "CustomFormSubmission" ADD COLUMN "expertMessageBy" TEXT` },
+      { table: 'BeneficiaryNotification', column: 'portalId', ddl: `ALTER TABLE "BeneficiaryNotification" ADD COLUMN "portalId" TEXT` },
+      { table: 'BeneficiaryNotification', column: 'programId', ddl: `ALTER TABLE "BeneficiaryNotification" ADD COLUMN "programId" INTEGER` },
       { table: 'PushSubscription', column: 'beneficiaryId', ddl: `ALTER TABLE "PushSubscription" ADD COLUMN "beneficiaryId" TEXT` },
       { table: 'PushSubscription', column: 'beneficiaryPhone', ddl: `ALTER TABLE "PushSubscription" ADD COLUMN "beneficiaryPhone" TEXT` },
     ];
@@ -196,6 +209,8 @@ async function ensureDatabaseSchema(): Promise<void> {
           "formId" TEXT,
           "formTitle" TEXT,
           "trackingCode" TEXT,
+          "portalId" TEXT,
+          "programId" INTEGER,
           "senderName" TEXT,
           "isRead" BOOLEAN NOT NULL DEFAULT false,
           "sentSms" BOOLEAN NOT NULL DEFAULT false,
@@ -221,8 +236,32 @@ async function ensureDatabaseSchema(): Promise<void> {
           "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
       `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "LoginPortal" (
+          "id" TEXT NOT NULL PRIMARY KEY,
+          "slug" TEXT NOT NULL,
+          "title" TEXT NOT NULL,
+          "subtitle" TEXT NOT NULL DEFAULT '',
+          "welcomeNote" TEXT NOT NULL DEFAULT '',
+          "phoneLabel" TEXT NOT NULL DEFAULT 'شماره موبایل',
+          "phoneHelperText" TEXT NOT NULL DEFAULT 'کد تایید ۶ رقمی به این شماره پیامک خواهد شد.',
+          "submitButtonText" TEXT NOT NULL DEFAULT 'ارسال کد تایید پیامکی',
+          "verifyButtonText" TEXT NOT NULL DEFAULT 'تایید کد و ورود',
+          "footerText" TEXT NOT NULL DEFAULT '',
+          "theme" TEXT NOT NULL DEFAULT 'emerald',
+          "bgDataUrl" TEXT,
+          "showLogo" BOOLEAN NOT NULL DEFAULT true,
+          "showSupportPhone" BOOLEAN NOT NULL DEFAULT true,
+          "isActive" BOOLEAN NOT NULL DEFAULT true,
+          "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await prisma.$executeRawUnsafe(
+        `CREATE UNIQUE INDEX IF NOT EXISTS "LoginPortal_slug_key" ON "LoginPortal"("slug")`
+      );
     } catch (err) {
-      console.error('[DB Auto-Migrate] Failed ensuring BeneficiaryNotification/SmsTemplate tables:', err);
+      console.error('[DB Auto-Migrate] Failed ensuring BeneficiaryNotification/SmsTemplate/LoginPortal tables:', err);
     }
 
     const tableColsCache = new Map<string, Set<string>>();
@@ -1834,15 +1873,37 @@ app.delete('/api/requests/:id', requireAuth, requirePerm('deleteInbox'), async (
 // 5. Programs & Projects
 app.get('/api/programs', requireAuth, requirePerm('viewProg', 'createProg', 'decideProg', 'viewFin'), async (_req, res) => {
   try {
-    const programs = await prisma.program.findMany({
-      include: {
-        logs: {
-          orderBy: { id: 'desc' },
+    const [programs, groupedCounts] = await Promise.all([
+      prisma.program.findMany({
+        include: {
+          logs: {
+            orderBy: { id: 'desc' },
+          },
         },
-      },
-      orderBy: { id: 'desc' },
-    });
-    res.json(programs);
+        orderBy: { id: 'desc' },
+      }),
+      prisma.customFormSubmission
+        .groupBy({
+          by: ['programId'],
+          where: { programId: { not: null } },
+          _count: { _all: true },
+        })
+        .catch(() => [] as Array<{ programId: number | null; _count: { _all: number } }>),
+    ]);
+
+    const countMap = new Map<number, number>();
+    for (const g of groupedCounts) {
+      if (typeof g.programId === 'number') {
+        countMap.set(g.programId, g._count._all);
+      }
+    }
+
+    res.json(
+      programs.map((p) => ({
+        ...p,
+        participantsCount: countMap.get(p.id) || 0,
+      }))
+    );
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch programs', details: String(error) });
   }
@@ -1861,6 +1922,9 @@ app.post('/api/programs', requireAuth, requirePerm('createProg'), async (req, re
       endDate,
       customFields,
       fieldSchema,
+      loginPortalId,
+      registrationFormIds,
+      notificationRules,
     } = req.body;
 
     if (!title || !String(title).trim()) {
@@ -1881,6 +1945,23 @@ app.post('/api/programs', requireAuth, requirePerm('createProg'), async (req, re
         ? JSON.stringify(fieldSchema)
         : '';
 
+    const regFormsStr =
+      typeof registrationFormIds === 'string'
+        ? registrationFormIds
+        : Array.isArray(registrationFormIds)
+        ? JSON.stringify(registrationFormIds.map((x: any) => String(x)).filter(Boolean))
+        : '[]';
+
+    const notifRulesStr =
+      typeof notificationRules === 'string'
+        ? notificationRules
+        : Array.isArray(notificationRules)
+        ? JSON.stringify(notificationRules)
+        : '[]';
+
+    const cleanPortalId =
+      typeof loginPortalId === 'string' && loginPortalId.trim() ? loginPortalId.trim() : null;
+
     const runCreate = () =>
       prisma.program.create({
         data: {
@@ -1895,6 +1976,9 @@ app.post('/api/programs', requireAuth, requirePerm('createProg'), async (req, re
           endDate: endDate || '',
           customFields: customFieldsStr,
           fieldSchema: fieldSchemaStr,
+          loginPortalId: cleanPortalId,
+          registrationFormIds: regFormsStr,
+          notificationRules: notifRulesStr,
           status: 'PENDING',
           pipelineStage: 1,
           progressPercent: 0,
@@ -1914,7 +1998,7 @@ app.post('/api/programs', requireAuth, requirePerm('createProg'), async (req, re
       }
     }
 
-    res.json(program);
+    res.json({ ...program, participantsCount: 0 });
   } catch (error) {
     res.status(500).json({ error: 'Failed to create program', details: String(error) });
   }
@@ -1923,6 +2007,7 @@ app.post('/api/programs', requireAuth, requirePerm('createProg'), async (req, re
 app.put('/api/programs/:id', requireAuth, requirePerm('decideProg', 'createProg'), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'شناسه طرح نامعتبر است.' });
     const {
       status,
       approvedBudget,
@@ -1940,6 +2025,9 @@ app.put('/api/programs/:id', requireAuth, requirePerm('decideProg', 'createProg'
       endDate,
       customFields,
       fieldSchema,
+      loginPortalId,
+      registrationFormIds,
+      notificationRules,
     } = req.body;
 
     const data: any = {};
@@ -1973,6 +2061,26 @@ app.put('/api/programs/:id', requireAuth, requirePerm('decideProg', 'createProg'
           ? JSON.stringify(fieldSchema)
           : '';
     }
+    if (loginPortalId !== undefined) {
+      data.loginPortalId =
+        typeof loginPortalId === 'string' && loginPortalId.trim() ? loginPortalId.trim() : null;
+    }
+    if (registrationFormIds !== undefined) {
+      data.registrationFormIds =
+        typeof registrationFormIds === 'string'
+          ? registrationFormIds
+          : Array.isArray(registrationFormIds)
+          ? JSON.stringify(registrationFormIds.map((x: any) => String(x)).filter(Boolean))
+          : '[]';
+    }
+    if (notificationRules !== undefined) {
+      data.notificationRules =
+        typeof notificationRules === 'string'
+          ? notificationRules
+          : Array.isArray(notificationRules)
+          ? JSON.stringify(notificationRules)
+          : '[]';
+    }
 
     const runUpdate = () =>
       prisma.program.update({
@@ -1992,7 +2100,10 @@ app.put('/api/programs/:id', requireAuth, requirePerm('decideProg', 'createProg'
         throw err;
       }
     }
-    res.json(updated);
+    const participantsCount = await prisma.customFormSubmission
+      .count({ where: { programId: id } })
+      .catch(() => 0);
+    res.json({ ...updated, participantsCount });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update program', details: String(error) });
   }
@@ -2026,6 +2137,442 @@ app.delete('/api/programs/:id', requireAuth, requirePerm('decideProg'), async (r
     res.status(500).json({ error: 'Failed to delete program', details: String(error) });
   }
 });
+
+// 5B. Dedicated Custom Login Portals (صفحات ورود اختصاصی)
+const RESERVED_PORTAL_SLUGS = new Set([
+  'admin',
+  'api',
+  'form',
+  'forms',
+  'p',
+  'portal',
+  'uploads',
+  'assets',
+  'beneficiary',
+  'login',
+  'public-form',
+  'admin-portal',
+]);
+
+function sanitizePortalSlug(raw: string): string {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+}
+
+app.get(
+  '/api/portals',
+  requireAuth,
+  requirePerm('manageForms', 'manageSettings', 'createProg', 'decideProg', 'viewProg'),
+  async (_req, res) => {
+    try {
+      const [portals, programs] = await Promise.all([
+        prisma.loginPortal.findMany({ orderBy: { createdAt: 'desc' } }),
+        prisma.program.findMany({
+          where: { loginPortalId: { not: null } },
+          select: { id: true, title: true, status: true, loginPortalId: true },
+        }),
+      ]);
+      const progByPortal = new Map<string, Array<{ id: number; title: string; status: string }>>();
+      for (const p of programs) {
+        if (!p.loginPortalId) continue;
+        const list = progByPortal.get(p.loginPortalId) || [];
+        list.push({ id: p.id, title: p.title, status: p.status });
+        progByPortal.set(p.loginPortalId, list);
+      }
+      res.json(
+        portals.map((portal) => ({
+          ...portal,
+          connectedPrograms: progByPortal.get(portal.id) || [],
+        }))
+      );
+    } catch (error) {
+      res.status(500).json(formatServerError(error, 'خطا در دریافت لیست صفحات ورود اختصاصی'));
+    }
+  }
+);
+
+app.get('/api/portals/public/:slug', async (req, res) => {
+  try {
+    const slug = sanitizePortalSlug(req.params.slug);
+    if (!slug) return res.status(404).json({ error: 'صفحه ورود مورد نظر یافت نشد.' });
+    const portal = await prisma.loginPortal.findUnique({ where: { slug } });
+    if (!portal || !portal.isActive) {
+      return res.status(404).json({ error: 'این صفحه ورود اختصاصی یافت نشد یا غیرفعال است.' });
+    }
+    const connectedPrograms = await prisma.program.findMany({
+      where: { loginPortalId: portal.id },
+      select: { id: true, title: true, status: true },
+    });
+    res.json({
+      ...portal,
+      connectedPrograms,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در دریافت اطلاعات صفحه ورود اختصاصی', details: String(error) });
+  }
+});
+
+app.post(
+  '/api/portals',
+  requireAuth,
+  requirePerm('manageForms', 'manageSettings', 'createProg', 'decideProg'),
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const title = String(body.title || '').trim();
+      const slug = sanitizePortalSlug(body.slug || '');
+      if (!title) {
+        return res.status(400).json({ error: 'عنوان صفحه ورود اختصاصی الزامی است.' });
+      }
+      if (!slug || slug.length < 2) {
+        return res
+          .status(400)
+          .json({ error: 'شناسه آدرس (Slug) باید حداقل ۲ کاراکتر و شامل حروف انگلیسی، عدد یا خط تیره باشد.' });
+      }
+      if (RESERVED_PORTAL_SLUGS.has(slug)) {
+        return res.status(400).json({ error: `آدرس «${slug}» رزرو شده است؛ لطفاً شناسه دیگری انتخاب کنید.` });
+      }
+
+      const existing = await prisma.loginPortal.findUnique({ where: { slug } });
+      if (existing) {
+        return res.status(409).json({ error: `آدرس «/p/${slug}» قبلاً ثبت شده است.` });
+      }
+
+      const created = await prisma.loginPortal.create({
+        data: {
+          slug,
+          title,
+          subtitle: String(body.subtitle || '').trim(),
+          welcomeNote: String(body.welcomeNote || '').trim(),
+          phoneLabel: String(body.phoneLabel || 'شماره موبایل').trim() || 'شماره موبایل',
+          phoneHelperText: String(body.phoneHelperText || 'کد تایید ۶ رقمی به این شماره پیامک خواهد شد.').trim(),
+          submitButtonText: String(body.submitButtonText || 'ارسال کد تایید پیامکی').trim() || 'ارسال کد تایید پیامکی',
+          verifyButtonText: String(body.verifyButtonText || 'تایید کد و ورود').trim() || 'تایید کد و ورود',
+          footerText: String(body.footerText || '').trim(),
+          theme: ['emerald', 'blue', 'amber', 'slate'].includes(String(body.theme)) ? String(body.theme) : 'emerald',
+          bgDataUrl: typeof body.bgDataUrl === 'string' && body.bgDataUrl.trim() ? body.bgDataUrl.trim() : null,
+          showLogo: body.showLogo !== false,
+          showSupportPhone: body.showSupportPhone !== false,
+          isActive: body.isActive !== false,
+        },
+      });
+      res.json({ ...created, connectedPrograms: [] });
+    } catch (error) {
+      res.status(500).json(formatServerError(error, 'خطا در ایجاد صفحه ورود اختصاصی'));
+    }
+  }
+);
+
+app.put(
+  '/api/portals/:id',
+  requireAuth,
+  requirePerm('manageForms', 'manageSettings', 'createProg', 'decideProg'),
+  async (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      const existing = await prisma.loginPortal.findUnique({ where: { id } });
+      if (!existing) return res.status(404).json({ error: 'صفحه ورود مورد نظر یافت نشد.' });
+
+      const body = req.body || {};
+      const data: any = {};
+      if (body.title !== undefined) {
+        const t = String(body.title).trim();
+        if (!t) return res.status(400).json({ error: 'عنوان صفحه ورود نمی‌تواند خالی باشد.' });
+        data.title = t;
+      }
+      if (body.slug !== undefined) {
+        const slug = sanitizePortalSlug(body.slug);
+        if (!slug || slug.length < 2) {
+          return res.status(400).json({ error: 'شناسه آدرس (Slug) معتبر نیست.' });
+        }
+        if (RESERVED_PORTAL_SLUGS.has(slug)) {
+          return res.status(400).json({ error: `آدرس «${slug}» رزرو شده است.` });
+        }
+        const dup = await prisma.loginPortal.findUnique({ where: { slug } });
+        if (dup && dup.id !== id) {
+          return res.status(409).json({ error: `آدرس «/p/${slug}» قبلاً استفاده شده است.` });
+        }
+        data.slug = slug;
+      }
+      if (body.subtitle !== undefined) data.subtitle = String(body.subtitle || '').trim();
+      if (body.welcomeNote !== undefined) data.welcomeNote = String(body.welcomeNote || '').trim();
+      if (body.phoneLabel !== undefined) data.phoneLabel = String(body.phoneLabel || 'شماره موبایل').trim();
+      if (body.phoneHelperText !== undefined) data.phoneHelperText = String(body.phoneHelperText || '').trim();
+      if (body.submitButtonText !== undefined) data.submitButtonText = String(body.submitButtonText || 'ارسال کد تایید پیامکی').trim();
+      if (body.verifyButtonText !== undefined) data.verifyButtonText = String(body.verifyButtonText || 'تایید کد و ورود').trim();
+      if (body.footerText !== undefined) data.footerText = String(body.footerText || '').trim();
+      if (body.theme !== undefined && ['emerald', 'blue', 'amber', 'slate'].includes(String(body.theme))) {
+        data.theme = String(body.theme);
+      }
+      if (body.bgDataUrl !== undefined) {
+        data.bgDataUrl = typeof body.bgDataUrl === 'string' && body.bgDataUrl.trim() ? body.bgDataUrl.trim() : null;
+      }
+      if (body.showLogo !== undefined) data.showLogo = Boolean(body.showLogo);
+      if (body.showSupportPhone !== undefined) data.showSupportPhone = Boolean(body.showSupportPhone);
+      if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
+
+      const updated = await prisma.loginPortal.update({ where: { id }, data });
+      const connectedPrograms = await prisma.program.findMany({
+        where: { loginPortalId: id },
+        select: { id: true, title: true, status: true },
+      });
+      res.json({ ...updated, connectedPrograms });
+    } catch (error) {
+      res.status(500).json(formatServerError(error, 'خطا در ویرایش صفحه ورود اختصاصی'));
+    }
+  }
+);
+
+app.delete(
+  '/api/portals/:id',
+  requireAuth,
+  requirePerm('manageForms', 'manageSettings', 'createProg', 'decideProg'),
+  async (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      await prisma.program.updateMany({
+        where: { loginPortalId: id },
+        data: { loginPortalId: null },
+      });
+      await prisma.loginPortal.delete({ where: { id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json(formatServerError(error, 'خطا در حذف صفحه ورود اختصاصی'));
+    }
+  }
+);
+
+// 5C. Project Participants & Conditional Bulk Notification (شرکت‌کنندگان پروژه)
+app.get(
+  '/api/programs/:id/participants',
+  requireAuth,
+  requirePerm('viewProg', 'createProg', 'decideProg'),
+  async (req, res) => {
+    try {
+      const programId = parseInt(req.params.id);
+      if (Number.isNaN(programId)) {
+        return res.status(400).json({ error: 'شناسه پروژه نامعتبر است.' });
+      }
+      const program = await prisma.program.findUnique({ where: { id: programId } });
+      if (!program) {
+        return res.status(404).json({ error: 'پروژه مورد نظر یافت نشد.' });
+      }
+
+      const formIds = parseRegistrationFormIds(program.registrationFormIds);
+      const [portal, linkedForms, submissions] = await Promise.all([
+        program.loginPortalId
+          ? prisma.loginPortal.findUnique({ where: { id: program.loginPortalId } })
+          : Promise.resolve(null),
+        formIds.length > 0
+          ? prisma.customForm.findMany({ where: { id: { in: formIds } } })
+          : Promise.resolve([]),
+        prisma.customFormSubmission.findMany({
+          where: { programId },
+          include: { form: true, beneficiary: true },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ]);
+
+      // Include any extra forms that already have submissions in this project
+      const formsMap = new Map<string, any>();
+      for (const f of linkedForms) formsMap.set(f.id, formatCustomFormRecord(f));
+      for (const s of submissions) {
+        if (s.form && !formsMap.has(s.form.id)) {
+          formsMap.set(s.form.id, formatCustomFormRecord(s.form));
+        }
+      }
+
+      res.json({
+        program,
+        portal,
+        forms: Array.from(formsMap.values()),
+        participants: submissions.map(formatCustomFormSubmissionRecord),
+      });
+    } catch (error) {
+      res.status(500).json(formatServerError(error, 'خطا در دریافت فهرست شرکت‌کنندگان پروژه'));
+    }
+  }
+);
+
+app.post(
+  '/api/programs/:id/participants/bulk-notify',
+  requireAuth,
+  requirePerm('viewProg', 'createProg', 'decideProg'),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const programId = parseInt(req.params.id);
+      if (Number.isNaN(programId)) {
+        return res.status(400).json({ error: 'شناسه پروژه نامعتبر است.' });
+      }
+
+      const {
+        conditions = [],
+        logic = 'AND',
+        submissionIds,
+        sendInApp = true,
+        sendSms = false,
+        smsTemplateId,
+        sendPush = false,
+        title = '',
+        message = '',
+      } = req.body || {};
+
+      if (!sendInApp && !sendSms && !sendPush) {
+        return res.status(400).json({ error: 'لطفاً حداقل یکی از کانال‌های ارسال (اعلان کارتابل، پیامک یا پوش) را انتخاب کنید.' });
+      }
+
+      if (sendInApp && !userHasPerm(req.authUser, 'sendBeneficiaryBell')) {
+        return res.status(403).json({ error: 'شما مجوز ارسال اعلان در زنگوله پروفایل را ندارید.' });
+      }
+      if (sendSms && !userHasPerm(req.authUser, 'sendBeneficiarySms')) {
+        return res.status(403).json({ error: 'شما مجوز ارسال پیامک به شرکت‌کنندگان را ندارید.' });
+      }
+      if (sendPush && !userHasPerm(req.authUser, 'sendBeneficiaryPush')) {
+        return res.status(403).json({ error: 'شما مجوز ارسال پوش نوتیفیکیشن را ندارید.' });
+      }
+
+      const cleanMsg = String(message || '').trim();
+      if ((sendInApp || sendPush) && !cleanMsg && !sendSms) {
+        return res.status(400).json({ error: 'متن پیام برای اعلان یا پوش نوتیفیکیشن نمی‌تواند خالی باشد.' });
+      }
+
+      // Verify approved SMS template up front if SMS is enabled
+      let approvedTemplate: any = null;
+      if (sendSms) {
+        const numericId = Number(smsTemplateId);
+        if (!numericId || Number.isNaN(numericId)) {
+          return res.status(400).json({
+            error: 'برای ارسال پیامک، انتخاب یکی از قالب‌های پیامکی از پیش تعریف‌شده و مجاز الزامی است.',
+          });
+        }
+        approvedTemplate = await prisma.smsTemplate.findUnique({ where: { id: numericId } });
+        if (!approvedTemplate || !approvedTemplate.isActive) {
+          return res.status(400).json({
+            error: 'قالب پیامک انتخاب‌شده یافت نشد یا غیرفعال است.',
+          });
+        }
+      }
+
+      const program = await prisma.program.findUnique({ where: { id: programId } });
+      if (!program) {
+        return res.status(404).json({ error: 'پروژه مورد نظر یافت نشد.' });
+      }
+
+      const portal = program.loginPortalId
+        ? await prisma.loginPortal.findUnique({ where: { id: program.loginPortalId } })
+        : null;
+
+      const allSubmissions = await prisma.customFormSubmission.findMany({
+        where: { programId },
+        include: { form: true, beneficiary: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const idSet =
+        Array.isArray(submissionIds) && submissionIds.length > 0
+          ? new Set(submissionIds.map((x: any) => Number(x)))
+          : null;
+
+      const validConditions = Array.isArray(conditions) ? conditions : [];
+      const conditionLogic: 'AND' | 'OR' = logic === 'OR' ? 'OR' : 'AND';
+
+      const matched = allSubmissions.filter((sub) => {
+        if (idSet && !idSet.has(sub.id)) return false;
+        const formatted = formatCustomFormSubmissionRecord(sub);
+        return evaluateParticipantConditions(formatted, validConditions, conditionLogic);
+      });
+
+      const senderName = req.authUser?.name || req.authUser?.username || 'مدیر پروژه';
+      let sentInApp = 0;
+      let sentSms = 0;
+      let failedSms = 0;
+      let sentPush = 0;
+      const errors: string[] = [];
+
+      for (const sub of matched) {
+        const submittedData = safeJsonParseArray(sub.data);
+        const nameField = submittedData.find(
+          (f: any) => /نام|متقاضی|شرکت‌کننده|نام خانوادگی/i.test(String(f?.label || '')) && String(f?.value || '').trim()
+        );
+        const phoneField = submittedData.find(
+          (f: any) =>
+            (f?.type === 'phone' || /موبایل|تلفن|همراه/i.test(String(f?.label || ''))) &&
+            normalizeIranMobile(String(f?.value || ''))
+        );
+        const resolvedName =
+          sub.beneficiary?.fullName || (nameField ? String(nameField.value).trim() : null);
+        const resolvedPhone =
+          sub.beneficiary?.phone || (phoneField ? String(phoneField.value).trim() : null);
+
+        let resolvedSmsText: string | null = null;
+        let resolvedSmsTemplateTitle: string | null = null;
+        if (sendSms && approvedTemplate) {
+          const tplRes = await resolveApprovedSmsText(approvedTemplate.id, {
+            name: resolvedName,
+            trackingCode: sub.trackingCode,
+            formTitle: sub.form?.title || program.title,
+            programTitle: program.title,
+            status: CUSTOM_FORM_STATUS_LABELS[sub.status] || sub.status,
+          });
+          if (tplRes.text) {
+            resolvedSmsText = tplRes.text;
+            resolvedSmsTemplateTitle = tplRes.templateTitle || approvedTemplate.title;
+          }
+        }
+
+        const notifTitle =
+          String(title || '').trim() || `اطلاع‌رسانی پروژه «${program.title}»`;
+
+        const result = await dispatchBeneficiaryNotification({
+          beneficiaryId: sub.beneficiaryId || sub.beneficiary?.id || null,
+          phone: resolvedPhone,
+          beneficiaryName: resolvedName,
+          title: notifTitle,
+          message: cleanMsg,
+          type: 'PROJECT_NOTICE',
+          formId: sub.formId,
+          formTitle: sub.form?.title || program.title,
+          trackingCode: sub.trackingCode,
+          portalId: sub.portalId || program.loginPortalId || null,
+          programId: program.id,
+          portalSlug: portal?.slug || null,
+          senderName,
+          sendInApp: Boolean(sendInApp),
+          sendSms: Boolean(sendSms),
+          smsTemplateId: approvedTemplate?.id || null,
+          resolvedSmsText,
+          resolvedSmsTemplateTitle,
+          sendPush: Boolean(sendPush),
+        });
+
+        if (result.inApp.created) sentInApp += 1;
+        if (result.sms.sent) sentSms += 1;
+        else if (result.sms.attempted) {
+          failedSms += 1;
+          if (result.sms.error && errors.length < 5) {
+            errors.push(`${resolvedName || sub.trackingCode}: ${result.sms.error}`);
+          }
+        }
+        if (result.push.sentCount > 0) sentPush += 1;
+      }
+
+      res.json({
+        matchedCount: matched.length,
+        sentInApp,
+        sentSms,
+        failedSms,
+        sentPush,
+        errors,
+      });
+    } catch (error) {
+      res.status(500).json(formatServerError(error, 'خطا در ارسال گروهی و شرطی به شرکت‌کنندگان پروژه'));
+    }
+  }
+);
 
 // 6. Comprehensive Financial Statistics & Pipeline Summary
 app.get('/api/finance/stats', requireAuth, requirePerm('viewFin'), async (_req, res) => {
@@ -2109,6 +2656,7 @@ app.get('/api/backup', requireAuth, requirePerm('manageSettings'), async (_req, 
     const entities = await prisma.entityDefinition.findMany();
     const customForms = await prisma.customForm.findMany();
     const customFormSubmissions = await prisma.customFormSubmission.findMany();
+    const loginPortals = await prisma.loginPortal.findMany().catch(() => []);
 
     const backupData = {
       timestamp: new Date().toISOString(),
@@ -2122,6 +2670,7 @@ app.get('/api/backup', requireAuth, requirePerm('manageSettings'), async (_req, 
       entities,
       customForms,
       customFormSubmissions,
+      loginPortals,
     };
 
     res.setHeader('Content-Type', 'application/json');
@@ -2264,6 +2813,48 @@ app.post('/api/restore', requireAuth, requirePerm('manageSettings'), async (req,
               isActive: cf.isActive !== false,
               showTracking: cf.showTracking !== false,
               fields: typeof cf.fields === 'string' ? cf.fields : JSON.stringify(cf.fields || []),
+            },
+          });
+        }
+      }
+    }
+
+    if (Array.isArray(data.loginPortals)) {
+      for (const lp of data.loginPortals) {
+        if (lp.slug && lp.title) {
+          await prisma.loginPortal.upsert({
+            where: { slug: lp.slug },
+            update: {
+              title: lp.title,
+              subtitle: lp.subtitle ?? '',
+              welcomeNote: lp.welcomeNote ?? '',
+              phoneLabel: lp.phoneLabel ?? 'شماره موبایل',
+              phoneHelperText: lp.phoneHelperText ?? '',
+              submitButtonText: lp.submitButtonText ?? 'ارسال کد تایید پیامکی',
+              verifyButtonText: lp.verifyButtonText ?? 'تایید کد و ورود',
+              footerText: lp.footerText ?? '',
+              theme: lp.theme ?? 'emerald',
+              bgDataUrl: lp.bgDataUrl ?? null,
+              showLogo: lp.showLogo !== false,
+              showSupportPhone: lp.showSupportPhone !== false,
+              isActive: lp.isActive !== false,
+            },
+            create: {
+              id: lp.id || undefined,
+              slug: lp.slug,
+              title: lp.title,
+              subtitle: lp.subtitle ?? '',
+              welcomeNote: lp.welcomeNote ?? '',
+              phoneLabel: lp.phoneLabel ?? 'شماره موبایل',
+              phoneHelperText: lp.phoneHelperText ?? '',
+              submitButtonText: lp.submitButtonText ?? 'ارسال کد تایید پیامکی',
+              verifyButtonText: lp.verifyButtonText ?? 'تایید کد و ورود',
+              footerText: lp.footerText ?? '',
+              theme: lp.theme ?? 'emerald',
+              bgDataUrl: lp.bgDataUrl ?? null,
+              showLogo: lp.showLogo !== false,
+              showSupportPhone: lp.showSupportPhone !== false,
+              isActive: lp.isActive !== false,
             },
           });
         }
@@ -2949,6 +3540,9 @@ function formatCustomFormRecord(form: any) {
 function formatCustomFormSubmissionRecord(sub: any) {
   return {
     ...sub,
+    formTitle: sub.form?.title || undefined,
+    portalId: sub.portalId ?? null,
+    programId: sub.programId ?? null,
     data: safeJsonParseArray(sub.data),
     beneficiary: sub.beneficiary
       ? {
@@ -3537,18 +4131,33 @@ app.get(
 
 function renderApprovedSmsTemplate(
   body: string,
-  vars: { name?: string | null; trackingCode?: string | null; formTitle?: string | null; instName?: string | null }
+  vars: {
+    name?: string | null;
+    trackingCode?: string | null;
+    formTitle?: string | null;
+    programTitle?: string | null;
+    status?: string | null;
+    instName?: string | null;
+  }
 ): string {
   return String(body || '')
     .replace(/\{name\}/g, vars.name?.trim() || 'مددجوی گرامی')
     .replace(/\{trackingCode\}/g, vars.trackingCode?.trim() || '---')
     .replace(/\{formTitle\}/g, vars.formTitle?.trim() || 'فرم پرونده')
+    .replace(/\{programTitle\}/g, vars.programTitle?.trim() || vars.formTitle?.trim() || 'پروژه')
+    .replace(/\{status\}/g, vars.status?.trim() || 'ثبت‌شده')
     .replace(/\{instName\}/g, vars.instName?.trim() || 'مؤسسه خیریه');
 }
 
 async function resolveApprovedSmsText(
   smsTemplateId: any,
-  vars: { name?: string | null; trackingCode?: string | null; formTitle?: string | null }
+  vars: {
+    name?: string | null;
+    trackingCode?: string | null;
+    formTitle?: string | null;
+    programTitle?: string | null;
+    status?: string | null;
+  }
 ): Promise<{ error?: string; text?: string; templateTitle?: string }> {
   const numericId = Number(smsTemplateId);
   if (!numericId || Number.isNaN(numericId)) {
@@ -3584,6 +4193,9 @@ async function dispatchBeneficiaryNotification(params: {
   formId?: string | null;
   formTitle?: string | null;
   trackingCode?: string | null;
+  portalId?: string | null;
+  programId?: number | null;
+  portalSlug?: string | null;
   senderName?: string | null;
   sendInApp?: boolean;
   sendSms?: boolean;
@@ -3687,7 +4299,9 @@ async function dispatchBeneficiaryNotification(params: {
       pushResult.error = 'شناسه یا شماره موبایل مددجو برای ارسال پوش نوتیفیکیشن مشخص نیست.';
     } else {
       const appCfg = await prisma.appConfig.findUnique({ where: { id: 1 } });
-      const portalUrl = `/${appCfg?.beneficiaryLoginSlug || 'beneficiary'}`;
+      const portalUrl = params.portalSlug
+        ? `/p/${params.portalSlug}`
+        : `/${appCfg?.beneficiaryLoginSlug || 'beneficiary'}`;
       const res = await pushService.sendBeneficiaryNotification({
         title: cleanTitle,
         body: effectiveInAppPushMsg || cleanTitle,
@@ -3698,7 +4312,7 @@ async function dispatchBeneficiaryNotification(params: {
       pushResult.sentCount = res.sentCount;
       pushResult.failedCount = res.failedCount;
       if (res.sentCount === 0 && res.failedCount === 0) {
-        pushResult.error = 'این مددجو هنوز پوش نوتیفیکیشن را در پروفایل خود فعال نکرده است.';
+        pushResult.error = 'این کاربر هنوز پوش نوتیفیکیشن را در پروفایل خود فعال نکرده است.';
       }
     }
   }
@@ -3719,6 +4333,8 @@ async function dispatchBeneficiaryNotification(params: {
         formId: params.formId || null,
         formTitle: params.formTitle || null,
         trackingCode: params.trackingCode || null,
+        portalId: params.portalId || null,
+        programId: typeof params.programId === 'number' ? params.programId : null,
         senderName: params.senderName || 'کارشناس مددکاری',
         isRead: false,
         sentSms: smsResult.sent,
@@ -3734,6 +4350,106 @@ async function dispatchBeneficiaryNotification(params: {
     sms: smsResult,
     push: pushResult,
   };
+}
+
+async function fireProjectNotificationRules(params: {
+  programId: number;
+  submission: any;
+  form: any;
+  beneficiary: any;
+  submittedData: any[];
+  eventType: ProjectRuleEvent;
+}) {
+  try {
+    const program = await prisma.program.findUnique({ where: { id: params.programId } });
+    if (!program) return;
+    const rules = parseProjectNotificationRules(program.notificationRules).filter(
+      (r) => r.isActive && r.eventType === params.eventType
+    );
+    if (rules.length === 0) return;
+
+    const portal = program.loginPortalId
+      ? await prisma.loginPortal.findUnique({ where: { id: program.loginPortalId } })
+      : null;
+
+    const evaluatable = {
+      id: params.submission.id,
+      formId: params.submission.formId,
+      trackingCode: params.submission.trackingCode,
+      status: params.submission.status,
+      note: params.submission.note,
+      expertMessage: params.submission.expertMessage,
+      beneficiary: params.beneficiary,
+      data: params.submittedData,
+    };
+
+    const nameField = params.submittedData.find(
+      (f: any) => /نام|متقاضی|شرکت‌کننده|نام خانوادگی/i.test(String(f?.label || '')) && String(f?.value || '').trim()
+    );
+    const phoneField = params.submittedData.find(
+      (f: any) =>
+        (f?.type === 'phone' || /موبایل|تلفن|همراه/i.test(String(f?.label || ''))) &&
+        normalizeIranMobile(String(f?.value || ''))
+    );
+    const resolvedName =
+      params.beneficiary?.fullName || (nameField ? String(nameField.value).trim() : null);
+    const resolvedPhone =
+      params.beneficiary?.phone || (phoneField ? String(phoneField.value).trim() : null);
+
+    for (const rule of rules) {
+      const matches = evaluateParticipantConditions(evaluatable, rule.conditions, rule.conditionLogic);
+      if (!matches) continue;
+
+      let resolvedSmsText: string | null = null;
+      let resolvedSmsTemplateTitle: string | null = null;
+      if (rule.sendSms && rule.smsTemplateId) {
+        const tplRes = await resolveApprovedSmsText(rule.smsTemplateId, {
+          name: resolvedName,
+          trackingCode: params.submission.trackingCode,
+          formTitle: params.form?.title || program.title,
+          programTitle: program.title,
+          status: CUSTOM_FORM_STATUS_LABELS[params.submission.status] || params.submission.status,
+        });
+        if (tplRes.text) {
+          resolvedSmsText = tplRes.text;
+          resolvedSmsTemplateTitle = tplRes.templateTitle || rule.title;
+        }
+      }
+
+      const notifTitle = rule.notificationTitle?.trim() || rule.title || `اطلاع‌رسانی پروژه «${program.title}»`;
+      const notifBody = renderApprovedSmsTemplate(rule.notificationMessage || '', {
+        name: resolvedName,
+        trackingCode: params.submission.trackingCode,
+        formTitle: params.form?.title || program.title,
+        programTitle: program.title,
+        status: CUSTOM_FORM_STATUS_LABELS[params.submission.status] || params.submission.status,
+      });
+
+      await dispatchBeneficiaryNotification({
+        beneficiaryId: params.submission.beneficiaryId || params.beneficiary?.id || null,
+        phone: resolvedPhone,
+        beneficiaryName: resolvedName,
+        title: notifTitle,
+        message: notifBody,
+        type: 'PROJECT_RULE',
+        formId: params.submission.formId,
+        formTitle: params.form?.title || program.title,
+        trackingCode: params.submission.trackingCode,
+        portalId: params.submission.portalId || program.loginPortalId || null,
+        programId: program.id,
+        portalSlug: portal?.slug || null,
+        senderName: `سامانه هوشمند (${program.title})`,
+        sendInApp: Boolean(rule.sendInApp),
+        sendSms: Boolean(rule.sendSms && resolvedSmsText),
+        smsTemplateId: rule.smsTemplateId || null,
+        resolvedSmsText,
+        resolvedSmsTemplateTitle,
+        sendPush: Boolean(rule.sendPush),
+      });
+    }
+  } catch (err) {
+    console.error('[ProjectNotificationRules] Execution error:', err);
+  }
 }
 
 app.post(
@@ -3960,6 +4676,18 @@ app.patch(
         });
       }
 
+      // Trigger project-level automatic conditional rules on status change
+      if (updated.programId && updated.status !== existing.status) {
+        fireProjectNotificationRules({
+          programId: updated.programId,
+          submission: updated,
+          form: updated.form,
+          beneficiary: updated.beneficiary,
+          submittedData,
+          eventType: 'PARTICIPANT_STATUS_CHANGED',
+        }).catch(() => undefined);
+      }
+
       // Direct multi-channel notification (Bell In-App + Approved-Template Direct SMS + Web Push)
       let notificationResult: any = undefined;
       const shouldDispatchDirect =
@@ -3976,6 +4704,10 @@ app.patch(
           updated.beneficiary?.phone ||
           (phoneFromFields ? String(phoneFromFields.value) : null);
 
+        const linkedPortal = updated.portalId
+          ? await prisma.loginPortal.findUnique({ where: { id: updated.portalId } }).catch(() => null)
+          : null;
+
         notificationResult = await dispatchBeneficiaryNotification({
           beneficiaryId: updated.beneficiaryId || updated.beneficiary?.id || null,
           phone: targetPhone,
@@ -3986,6 +4718,9 @@ app.patch(
           formId: updated.formId,
           formTitle: updated.form.title,
           trackingCode: updated.trackingCode,
+          portalId: updated.portalId || null,
+          programId: updated.programId || null,
+          portalSlug: linkedPortal?.slug || null,
           senderName,
           sendInApp: sendInApp === true,
           sendSms: sendDirectSms === true,
@@ -4039,9 +4774,13 @@ app.post('/api/beneficiary/auth/otp/send', async (req, res) => {
       const elapsedSec = Math.floor((Date.now() - lastOtp.createdAt.getTime()) / 1000);
       if (elapsedSec < 60 && lastOtp.expiresAt > new Date()) {
         const waitSec = 60 - elapsedSec;
+        const remainingExpires = Math.max(1, Math.floor((lastOtp.expiresAt.getTime() - Date.now()) / 1000));
         return res.status(429).json({
-          error: `لطفاً ${waitSec} ثانیه دیگر برای درخواست مجدد کد صبر کنید.`,
+          error: `کد تایید دقایقی پیش ارسال شده است. می‌توانید کد دریافتی را وارد کنید یا ${waitSec} ثانیه دیگر مجدداً درخواست دهید.`,
           retryAfter: waitSec,
+          otpAlreadySent: true,
+          maskedPhone: maskPhone(cleanPhone),
+          expiresIn: remainingExpires,
         });
       }
     }
@@ -4078,7 +4817,7 @@ app.post('/api/beneficiary/auth/otp/send', async (req, res) => {
     const hasApiKey = Boolean(smsConf?.isEnabled && smsConf?.apiKey?.trim() && smsConf.apiKey.trim() !== 'DEMO_KEY');
     const usePattern = hasApiKey && Boolean(smsConf?.loginOtpTemplate && smsConf.loginOtpTemplate.trim());
 
-    let sendRes: { success: boolean; messageId?: string; cost?: number; error?: string };
+    let sendRes: { success: boolean; messageId?: string; cost?: number; error?: string; timedOut?: boolean };
     let simulated = false;
 
     if (!hasApiKey) {
@@ -4109,12 +4848,22 @@ app.post('/api/beneficiary/auth/otp/send', async (req, res) => {
         eventType: 'BENEFICIARY_LOGIN_OTP',
         receptor: cleanPhone,
         message: usePattern ? `ارسال کد تایید مددجو با الگوی ${smsConf!.loginOtpTemplate}` : messageText,
-        status: sendRes.success ? (simulated ? 'SIMULATED' : 'SUCCESS') : 'FAILED',
+        status: sendRes.success ? (simulated ? 'SIMULATED' : 'SUCCESS') : sendRes.timedOut ? 'TIMEOUT' : 'FAILED',
         providerMsgId: sendRes.messageId || null,
         cost: sendRes.cost || null,
         errorDetails: sendRes.error || null,
       },
     });
+
+    // If gateway timed out after receiving the request, SMS may still arrive on phone — keep OTP active and open code input!
+    if (!sendRes.success && sendRes.timedOut) {
+      return res.json({
+        success: true,
+        maybeDelayed: true,
+        expiresIn: 120,
+        maskedPhone: maskPhone(cleanPhone),
+      });
+    }
 
     if (!sendRes.success) {
       await prisma.otpCode.update({ where: { id: createdOtp.id }, data: { used: true } });
@@ -4249,6 +4998,98 @@ app.get('/api/beneficiary/portal', requireBeneficiaryAuth, async (req: Beneficia
     const beneficiary = req.authBeneficiary!;
     const notifWhere = buildBeneficiaryNotificationWhere(beneficiary);
     const normalizedPhone = normalizeIranMobile(beneficiary.phone);
+    const rawPortalSlug = typeof req.query.portalSlug === 'string' ? sanitizePortalSlug(req.query.portalSlug) : '';
+
+    if (rawPortalSlug) {
+      const portal = await prisma.loginPortal.findUnique({ where: { slug: rawPortalSlug } });
+      if (!portal || !portal.isActive) {
+        return res.status(404).json({ error: 'صفحه ورود اختصاصی یافت نشد یا غیرفعال است.' });
+      }
+
+      const [linkedPrograms, submissions, allNotifications, pushSubscribedCount] = await Promise.all([
+        prisma.program.findMany({
+          where: { loginPortalId: portal.id },
+          orderBy: { id: 'desc' },
+        }),
+        prisma.customFormSubmission.findMany({
+          where: { beneficiaryId: beneficiary.id },
+          orderBy: { updatedAt: 'desc' },
+        }),
+        prisma.beneficiaryNotification.findMany({
+          where: notifWhere,
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+        prisma.pushSubscription.count({
+          where: {
+            OR: [
+              { beneficiaryId: beneficiary.id },
+              ...(normalizedPhone ? [{ beneficiaryPhone: normalizedPhone }] : []),
+            ],
+          },
+        }),
+      ]);
+
+      const programIds = new Set(linkedPrograms.map((p) => p.id));
+      const allFormIds = new Set<string>();
+      for (const prog of linkedPrograms) {
+        for (const fId of parseRegistrationFormIds(prog.registrationFormIds)) {
+          allFormIds.add(fId);
+        }
+      }
+
+      const forms =
+        allFormIds.size > 0
+          ? await prisma.customForm.findMany({
+              where: { id: { in: Array.from(allFormIds) }, isActive: true },
+            })
+          : [];
+      const formById = new Map(forms.map((f) => [f.id, f]));
+
+      const subByProgAndForm = new Map<string, any>();
+      for (const s of submissions) {
+        if (s.programId) {
+          const key = `${s.programId}:${s.formId}`;
+          if (!subByProgAndForm.has(key)) {
+            subByProgAndForm.set(key, formatCustomFormSubmissionRecord(s));
+          }
+        }
+      }
+
+      const items: any[] = [];
+      for (const prog of linkedPrograms) {
+        const regIds = parseRegistrationFormIds(prog.registrationFormIds);
+        for (const fId of regIds) {
+          const f = formById.get(fId);
+          if (!f) continue;
+          items.push({
+            form: formatCustomFormRecord(f),
+            submission: subByProgAndForm.get(`${prog.id}:${f.id}`) || null,
+            programId: prog.id,
+            programTitle: prog.title,
+          });
+        }
+      }
+
+      const notifications = allNotifications.filter(
+        (n) =>
+          n.portalId === portal.id ||
+          (typeof n.programId === 'number' && programIds.has(n.programId)) ||
+          (!n.portalId && !n.programId)
+      );
+
+      return res.json({
+        beneficiary,
+        portal,
+        publicFormEnabled: false,
+        publicRequest: null,
+        notifications,
+        unreadNotificationsCount: notifications.filter((n) => !n.isRead).length,
+        pushSubscribedCount,
+        items,
+      });
+    }
+
     const [forms, submissions, publicFormEnabled, notifications, pushSubscribedCount] =
       await Promise.all([
         prisma.customForm.findMany({
@@ -4256,7 +5097,7 @@ app.get('/api/beneficiary/portal', requireBeneficiaryAuth, async (req: Beneficia
           orderBy: { createdAt: 'asc' },
         }),
         prisma.customFormSubmission.findMany({
-          where: { beneficiaryId: beneficiary.id },
+          where: { beneficiaryId: beneficiary.id, programId: null },
           orderBy: { updatedAt: 'desc' },
         }),
         isPublicFormEnabledForBeneficiaryPortal(),
@@ -4288,6 +5129,7 @@ app.get('/api/beneficiary/portal', requireBeneficiaryAuth, async (req: Beneficia
 
     res.json({
       beneficiary,
+      portal: null,
       publicFormEnabled,
       publicRequest,
       notifications,
@@ -4296,6 +5138,8 @@ app.get('/api/beneficiary/portal', requireBeneficiaryAuth, async (req: Beneficia
       items: forms.map((f) => ({
         form: formatCustomFormRecord(f),
         submission: subMap.get(f.id) || null,
+        programId: null,
+        programTitle: null,
       })),
     });
   } catch (error) {
@@ -4598,123 +5442,85 @@ const handleBeneficiaryPublicRequestUpsert = async (
 app.post('/api/beneficiary/public-request', requireBeneficiaryAuth, handleBeneficiaryPublicRequestUpsert);
 app.put('/api/beneficiary/public-request', requireBeneficiaryAuth, handleBeneficiaryPublicRequestUpsert);
 
-app.post(
-  '/api/beneficiary/forms/:formId/submit',
-  requireBeneficiaryAuth,
-  async (req: BeneficiaryRequestContext, res) => {
-    try {
-      const beneficiary = req.authBeneficiary!;
-      const form = await prisma.customForm.findUnique({ where: { id: req.params.formId } });
-      if (!form || !form.isActive || !form.showInBeneficiaryPortal) {
-        return res.status(404).json({ error: 'این فرم در پروفایل مددجو در دسترس نیست.' });
-      }
-
-      const submittedData = Array.isArray(req.body?.data) ? req.body.data : [];
-      const existing = await prisma.customFormSubmission.findFirst({
-        where: { formId: form.id, beneficiaryId: beneficiary.id },
-        orderBy: { id: 'desc' },
-      });
-
-      if (existing) {
-        const nextStatus = existing.status === 'NEEDS_INFO' ? 'IN_REVIEW' : existing.status;
-        const updated = await prisma.customFormSubmission.update({
-          where: { id: existing.id },
-          data: {
-            data: JSON.stringify(submittedData),
-            status: nextStatus,
-          },
-        });
-
-        fireCustomFormSmsRules({
-          form,
-          submission: updated,
-          beneficiary,
-          submittedData,
-          events: ['FORM_UPDATED'],
-        }).catch((err) => console.error('Beneficiary form update SMS trigger error:', err));
-
-        return res.json(formatCustomFormSubmissionRecord(updated));
-      }
-
-      const shamsiYear = new Date().getFullYear() - 621;
-      const count = await prisma.customFormSubmission.count();
-      const trackingCode = `FRM-${shamsiYear}-${1001 + count + Math.floor(Math.random() * 90)}`;
-
-      const created = await prisma.customFormSubmission.create({
-        data: {
-          trackingCode,
-          formId: form.id,
-          beneficiaryId: beneficiary.id,
-          data: JSON.stringify(submittedData),
-          status: 'NEW',
-        },
-      });
-
-      fireCustomFormSmsRules({
-        form,
-        submission: created,
-        beneficiary,
-        submittedData,
-        events: ['FORM_SUBMITTED'],
-      }).catch((err) => console.error('Beneficiary form submit SMS trigger error:', err));
-
-      res.json(formatCustomFormSubmissionRecord(created));
-    } catch (error) {
-      res.status(500).json({ error: 'خطا در ثبت فرم مددجو', details: String(error) });
+const handleBeneficiaryFormSubmitOrUpdate = async (
+  req: BeneficiaryRequestContext,
+  res: express.Response
+) => {
+  try {
+    const beneficiary = req.authBeneficiary!;
+    const form = await prisma.customForm.findUnique({ where: { id: req.params.formId } });
+    if (!form || !form.isActive) {
+      return res.status(404).json({ error: 'فرم مورد نظر یافت نشد یا غیرفعال است.' });
     }
-  }
-);
 
-app.put(
-  '/api/beneficiary/forms/:formId/submit',
-  requireBeneficiaryAuth,
-  async (req: BeneficiaryRequestContext, res) => {
-    try {
-      const beneficiary = req.authBeneficiary!;
-      const form = await prisma.customForm.findUnique({ where: { id: req.params.formId } });
-      if (!form || !form.isActive || !form.showInBeneficiaryPortal) {
-        return res.status(404).json({ error: 'این فرم در پروفایل مددجو در دسترس نیست.' });
+    const rawProgramId = req.body?.programId;
+    const rawPortalId = typeof req.body?.portalId === 'string' ? req.body.portalId.trim() : '';
+    let resolvedProgramId: number | null = null;
+    let resolvedPortalId: string | null = null;
+
+    if (rawProgramId !== undefined && rawProgramId !== null && rawProgramId !== '') {
+      const pid = Number(rawProgramId);
+      if (Number.isNaN(pid)) {
+        return res.status(400).json({ error: 'شناسه پروژه نامعتبر است.' });
       }
-
-      const submittedData = Array.isArray(req.body?.data) ? req.body.data : [];
-      const existing = await prisma.customFormSubmission.findFirst({
-        where: { formId: form.id, beneficiaryId: beneficiary.id },
-        orderBy: { id: 'desc' },
-      });
-
-      if (!existing) {
-        const shamsiYear = new Date().getFullYear() - 621;
-        const count = await prisma.customFormSubmission.count();
-        const trackingCode = `FRM-${shamsiYear}-${1001 + count + Math.floor(Math.random() * 90)}`;
-
-        const created = await prisma.customFormSubmission.create({
-          data: {
-            trackingCode,
-            formId: form.id,
-            beneficiaryId: beneficiary.id,
-            data: JSON.stringify(submittedData),
-            status: 'NEW',
-          },
-        });
-
-        fireCustomFormSmsRules({
-          form,
-          submission: created,
-          beneficiary,
-          submittedData,
-          events: ['FORM_SUBMITTED'],
-        }).catch((err) => console.error('Beneficiary form submit SMS trigger error:', err));
-
-        return res.json(formatCustomFormSubmissionRecord(created));
+      const prog = await prisma.program.findUnique({ where: { id: pid } });
+      if (!prog || !prog.loginPortalId) {
+        return res.status(404).json({ error: 'پروژه مرتبط با این فرم یافت نشد.' });
       }
+      if (rawPortalId && prog.loginPortalId !== rawPortalId) {
+        return res.status(403).json({ error: 'این پروژه به صفحه ورود فعلی متصل نیست.' });
+      }
+      const portal = await prisma.loginPortal.findUnique({ where: { id: prog.loginPortalId } });
+      if (!portal || !portal.isActive) {
+        return res.status(404).json({ error: 'صفحه ورود اختصاصی این پروژه غیرفعال است.' });
+      }
+      const allowedFormIds = parseRegistrationFormIds(prog.registrationFormIds);
+      if (!allowedFormIds.includes(form.id)) {
+        return res.status(403).json({ error: 'این فرم به پروژه انتخاب‌شده متصل نیست.' });
+      }
+      resolvedProgramId = prog.id;
+      resolvedPortalId = portal.id;
+    } else if (!form.showInBeneficiaryPortal) {
+      return res.status(404).json({ error: 'این فرم در پروفایل مددجو در دسترس نیست.' });
+    }
 
+    const submittedData = Array.isArray(req.body?.data) ? req.body.data : [];
+
+    // Update beneficiary fullName if empty and provided in form fields
+    if (!beneficiary.fullName?.trim()) {
+      const nameField = submittedData.find(
+        (f: any) => /نام|متقاضی|نام و نام خانوادگی/i.test(String(f?.label || '')) && String(f?.value || '').trim()
+      );
+      if (nameField) {
+        await prisma.beneficiaryAccount
+          .update({
+            where: { id: beneficiary.id },
+            data: { fullName: String(nameField.value).trim() },
+          })
+          .catch(() => undefined);
+      }
+    }
+
+    const existing = await prisma.customFormSubmission.findFirst({
+      where: {
+        formId: form.id,
+        beneficiaryId: beneficiary.id,
+        programId: resolvedProgramId,
+      },
+      orderBy: { id: 'desc' },
+    });
+
+    if (existing) {
       const nextStatus = existing.status === 'NEEDS_INFO' ? 'IN_REVIEW' : existing.status;
       const updated = await prisma.customFormSubmission.update({
         where: { id: existing.id },
         data: {
           data: JSON.stringify(submittedData),
           status: nextStatus,
+          portalId: resolvedPortalId ?? existing.portalId,
+          programId: resolvedProgramId ?? existing.programId,
         },
+        include: { form: true, beneficiary: true },
       });
 
       fireCustomFormSmsRules({
@@ -4725,19 +5531,76 @@ app.put(
         events: ['FORM_UPDATED'],
       }).catch((err) => console.error('Beneficiary form update SMS trigger error:', err));
 
-      res.json(formatCustomFormSubmissionRecord(updated));
-    } catch (error) {
-      res.status(500).json({ error: 'خطا در ویرایش فرم مددجو', details: String(error) });
+      if (resolvedProgramId) {
+        fireProjectNotificationRules({
+          programId: resolvedProgramId,
+          submission: updated,
+          form,
+          beneficiary,
+          submittedData,
+          eventType: 'PARTICIPANT_UPDATED',
+        }).catch(() => undefined);
+      }
+
+      return res.json(formatCustomFormSubmissionRecord(updated));
     }
+
+    const shamsiYear = new Date().getFullYear() - 621;
+    const count = await prisma.customFormSubmission.count();
+    const trackingCode = `FRM-${shamsiYear}-${1001 + count + Math.floor(Math.random() * 90)}`;
+
+    const created = await prisma.customFormSubmission.create({
+      data: {
+        trackingCode,
+        formId: form.id,
+        beneficiaryId: beneficiary.id,
+        portalId: resolvedPortalId,
+        programId: resolvedProgramId,
+        data: JSON.stringify(submittedData),
+        status: 'NEW',
+      },
+      include: { form: true, beneficiary: true },
+    });
+
+    fireCustomFormSmsRules({
+      form,
+      submission: created,
+      beneficiary,
+      submittedData,
+      events: ['FORM_SUBMITTED'],
+    }).catch((err) => console.error('Beneficiary form submit SMS trigger error:', err));
+
+    if (resolvedProgramId) {
+      fireProjectNotificationRules({
+        programId: resolvedProgramId,
+        submission: created,
+        form,
+        beneficiary,
+        submittedData,
+        eventType: 'PARTICIPANT_REGISTERED',
+      }).catch(() => undefined);
+    }
+
+    res.json(formatCustomFormSubmissionRecord(created));
+  } catch (error) {
+    res.status(500).json({ error: 'خطا در ثبت اطلاعات فرم', details: String(error) });
   }
-);
+};
+
+app.post('/api/beneficiary/forms/:formId/submit', requireBeneficiaryAuth, handleBeneficiaryFormSubmitOrUpdate);
+app.put('/api/beneficiary/forms/:formId/submit', requireBeneficiaryAuth, handleBeneficiaryFormSubmitOrUpdate);
 
 // Vite Middleware or Static Production Serving
 async function startServer() {
   await ensureDatabaseSchema();
   await ensureInitialBootstrap();
   await ensureDefaultEntities();
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd = process.env.NODE_ENV === 'production' || process.argv.includes('--prod');
+
+  // Ensure unknown /api/* routes always return JSON 404 instead of SPA index.html
+  app.all('/api/*', (_req, res) => {
+    res.status(404).json({ error: 'مسیر درخواستی API یافت نشد.' });
+  });
 
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
@@ -4811,14 +5674,25 @@ if (globalThis.customElements && !globalThis.customElements.get("vite-error-over
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    const distDir = path.resolve(__dirname, 'dist');
+    const indexHtmlPath = path.resolve(distDir, 'index.html');
+    if (!fs.existsSync(indexHtmlPath)) {
+      console.warn('[Production] dist/index.html not found! Run "npm run build" first.');
+    }
+    app.use(express.static(distDir));
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      if (fs.existsSync(indexHtmlPath)) {
+        res.sendFile(indexHtmlPath);
+      } else {
+        res.status(503).send('فایل‌های بیلد (پوشه dist) یافت نشدند. لطفاً ابتدا دستور npm run build را اجرا کنید.');
+      }
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT} (SQLite charity.db active)`);
+    console.log(
+      `Server running on port ${PORT} (${isProd ? 'PRODUCTION' : 'DEV'} mode, SQLite charity.db active)`
+    );
   });
 }
 

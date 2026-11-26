@@ -86,13 +86,16 @@ model Program {
   status          String       @default("PENDING") // PENDING, APPROVED, NEEDS_REVISION, REJECTED
   pipelineStage   Int          @default(1) // 1 to 4
   progressPercent Int          @default(0)
-  approvedDate    String?
-  approvedBy      String?
-  customFields    String       @default("[]")
-  fieldSchema     String       @default("")
-  logs            ProgramLog[]
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  approvedDate        String?
+  approvedBy          String?
+  customFields        String       @default("[]")
+  fieldSchema         String       @default("")
+  loginPortalId       String?
+  registrationFormIds String       @default("[]")
+  notificationRules   String       @default("[]")
+  logs                ProgramLog[]
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 }
 
 model ProgramLog {
@@ -242,6 +245,8 @@ model CustomFormSubmission {
   form            CustomForm          @relation(fields: [formId], references: [id], onDelete: Cascade)
   beneficiaryId   String?
   beneficiary     BeneficiaryAccount? @relation(fields: [beneficiaryId], references: [id], onDelete: SetNull)
+  portalId        String?
+  programId       Int?
   data            String              @default("[]")
   status          String              @default("NEW") // NEW, IN_REVIEW, NEEDS_INFO, APPROVED, REJECTED, REVIEWED, ARCHIVED
   note            String?
@@ -273,6 +278,8 @@ model BeneficiaryNotification {
   type          String   @default("EXPERT_MESSAGE")
   formId        String?
   formTitle     String?
+  portalId      String?
+  programId     Int?
   trackingCode  String?
   senderName    String?
   isRead        Boolean  @default(false)
@@ -293,6 +300,26 @@ model SmsTemplate {
   createdBy String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model LoginPortal {
+  id               String   @id @default(cuid())
+  slug             String   @unique
+  title            String
+  subtitle         String   @default("")
+  welcomeNote      String   @default("")
+  phoneLabel       String   @default("شماره تلفن همراه")
+  phoneHelperText  String   @default("کد تایید یک‌بارمصرف به این شماره پیامک می‌شود.")
+  submitButtonText String   @default("دریافت کد تایید پیامکی")
+  verifyButtonText String   @default("تایید و ورود")
+  footerText       String   @default("")
+  theme            String   @default("emerald")
+  bgDataUrl        String?
+  showLogo         Boolean  @default(true)
+  showSupportPhone Boolean  @default(false)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 
